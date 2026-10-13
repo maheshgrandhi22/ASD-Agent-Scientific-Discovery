@@ -30,20 +30,28 @@ class TestResearchQuestionValidator(unittest.TestCase):
         self.assertFalse(valid)
         self.assertIn("text", message.lower())
 
-    def test_agent_rejects_invalid_question(self):
+    @patch("src.agent.discovery_agent.LiteratureRetriever.search")
+    def test_agent_rejects_invalid_question(self, mock_search):
         agent = ScientificDiscoveryAgent()
-        with patch("builtins.print") as mock_print:
-            result = agent.run("AI?")
-        self.assertFalse(result)
-        self.assertTrue(mock_print.called)
 
-    def test_agent_accepts_valid_question(self):
+        with patch("builtins.print"):
+            result = agent.run("AI?")
+
+        self.assertFalse(result)
+        mock_search.assert_not_called()
+
+    @patch("src.agent.discovery_agent.LiteratureRetriever.search",
+           return_value=[])
+    def test_agent_accepts_valid_question(self, mock_search):
         agent = ScientificDiscoveryAgent()
+
         with patch("builtins.print"):
             result = agent.run(
                 "How can AI improve drug discovery?"
             )
+
         self.assertTrue(result)
+        mock_search.assert_called_once()
 
 
 if __name__ == "__main__":
