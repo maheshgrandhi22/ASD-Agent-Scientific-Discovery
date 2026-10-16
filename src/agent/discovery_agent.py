@@ -1,8 +1,9 @@
-﻿import requests
+import requests
 
 from input_validator import validate_research_question
 from src.agent.research_planner import ResearchPlanner
 from src.agent.literature_retriever import LiteratureRetriever
+from src.agent.findings_analyzer import FindingsAnalyzer
 
 
 class ScientificDiscoveryAgent:
@@ -10,11 +11,10 @@ class ScientificDiscoveryAgent:
         self.name = "Autonomous Scientific Discovery Agent"
         self.planner = ResearchPlanner()
         self.literature_retriever = LiteratureRetriever()
+        self.findings_analyzer = FindingsAnalyzer()
 
     def run(self, research_question):
-        valid, message = validate_research_question(
-            research_question
-        )
+        valid, message = validate_research_question(research_question)
 
         if not valid:
             print(f"Invalid research question: {message}")
@@ -26,17 +26,14 @@ class ScientificDiscoveryAgent:
         print(f"\nResearch question: {plan['research_question']}")
         print(f"\nObjective: {plan['objective']}")
 
-        print("\nResearch subquestions:")
-        for index, item in enumerate(plan["subquestions"], 1):
-            print(f"{index}. {item}")
-
-        print("\nProposed research methods:")
-        for index, item in enumerate(plan["methods"], 1):
-            print(f"{index}. {item}")
-
-        print("\nNext steps:")
-        for index, item in enumerate(plan["next_steps"], 1):
-            print(f"{index}. {item}")
+        for section, heading in [
+            ("subquestions", "Research subquestions"),
+            ("methods", "Proposed research methods"),
+            ("next_steps", "Next steps"),
+        ]:
+            print(f"\n{heading}:")
+            for index, item in enumerate(plan[section], 1):
+                print(f"{index}. {item}")
 
         print("\n=== Scientific Literature Search ===")
 
@@ -47,13 +44,28 @@ class ScientificDiscoveryAgent:
 
             if not papers:
                 print("No papers were found for this query.")
+            else:
+                analyzed = self.findings_analyzer.analyze(
+                    research_question, papers
+                )
 
-            for index, paper in enumerate(papers, 1):
-                print(f"\n{index}. {paper['title']}")
-                print(f"   Authors: {', '.join(paper['authors'])}")
-                print(f"   Published: {paper['published']}")
-                print(f"   URL: {paper['url']}")
-                print(f"   Abstract: {paper['abstract']}")
+                print("\n=== Analyzed Research Findings ===")
+
+                for index, paper in enumerate(analyzed, 1):
+                    print(f"\n{index}. {paper['title']}")
+                    print(
+                        f"   Relevance score: "
+                        f"{paper['relevance_score']}%"
+                    )
+                    print(f"   Authors: {', '.join(paper['authors'])}")
+                    print(f"   Published: {paper['published']}")
+                    print(f"   URL: {paper['url']}")
+                    print("   Key findings:")
+
+                    for finding in paper["key_findings"]:
+                        print(f"   - {finding}")
+
+                    print(f"   Abstract: {paper['abstract']}")
 
         except (requests.RequestException, ValueError) as error:
             print(f"Literature search unavailable: {error}")
