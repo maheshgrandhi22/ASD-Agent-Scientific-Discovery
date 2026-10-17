@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 
 from input_validator import validate_research_question
 from src.agent.research_planner import ResearchPlanner
@@ -66,6 +66,24 @@ class ScientificDiscoveryAgent:
                         print(f"   - {finding}")
 
                     print(f"   Abstract: {paper['abstract']}")
+
+                report = self.findings_analyzer.create_research_summary(
+                    research_question, analyzed
+                )
+
+                print("\n=== Scientific Research Summary ===")
+                print(f"Papers analyzed: {report['paper_count']}")
+                print(f"\nSummary: {report['summary']}")
+
+                print("\nCommon research themes:")
+                if report["common_themes"]:
+                    for theme in report["common_themes"]:
+                        print(
+                            f"- {theme['theme']} "
+                            f"({theme['paper_count']} papers)"
+                        )
+                else:
+                    print("No common themes identified.")
 
         except (requests.RequestException, ValueError) as error:
             print(f"Literature search unavailable: {error}")

@@ -49,6 +49,9 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         self.assertIn("Scientific Discovery Research Plan", output.getvalue())
         self.assertIn("Scientific Literature Search", output.getvalue())
         self.assertIn("AI for Drug Discovery", output.getvalue())
+        self.assertIn("Scientific Research Summary", output.getvalue())
+        self.assertIn("Papers analyzed: 1", output.getvalue())
+        self.assertIn("Common research themes:", output.getvalue())
         self.assertIn("Research workflow completed.", output.getvalue())
 
     @patch("src.agent.discovery_agent.LiteratureRetriever.search")
@@ -86,3 +89,4 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
