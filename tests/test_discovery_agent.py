@@ -1,4 +1,5 @@
-﻿import io
+﻿
+import io
 import unittest
 import requests
 
@@ -29,11 +30,15 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
             "abstract": "AI methods for scientific research.",
         }
 
+    @patch("src.agent.discovery_agent.ResultExporter.export_json")
     @patch("src.agent.discovery_agent.LiteratureRetriever.search")
     @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
-    def test_complete_workflow(self, mock_plan, mock_search):
+    def test_complete_workflow(
+        self, mock_plan, mock_search, mock_export
+    ):
         mock_plan.return_value = self.plan
         mock_search.return_value = [self.paper]
+        mock_export.return_value = "research_results.json"
 
         agent = ScientificDiscoveryAgent()
         output = io.StringIO()
@@ -46,13 +51,33 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         mock_search.assert_called_once_with(
             self.question, max_results=3
         )
-        self.assertIn("Scientific Discovery Research Plan", output.getvalue())
-        self.assertIn("Scientific Literature Search", output.getvalue())
-        self.assertIn("AI for Drug Discovery", output.getvalue())
-        self.assertIn("Scientific Research Summary", output.getvalue())
-        self.assertIn("Papers analyzed: 1", output.getvalue())
-        self.assertIn("Common research themes:", output.getvalue())
-        self.assertIn("Research workflow completed.", output.getvalue())
+
+        mock_export.assert_called_once()
+        exported_data = mock_export.call_args.args[0]
+
+        self.assertEqual(
+            exported_data["research_question"], self.question
+        )
+        self.assertEqual(exported_data["research_plan"], self.plan)
+        self.assertEqual(len(exported_data["analyzed_papers"]), 1)
+        self.assertEqual(
+            exported_data["analyzed_papers"][0]["title"],
+            "AI for Drug Discovery",
+        )
+        self.assertIn("research_summary", exported_data)
+
+        text = output.getvalue()
+        self.assertIn("Scientific Discovery Research Plan", text)
+        self.assertIn("Scientific Literature Search", text)
+        self.assertIn("AI for Drug Discovery", text)
+        self.assertIn("Scientific Research Summary", text)
+        self.assertIn("Papers analyzed: 1", text)
+        self.assertIn("Common research themes:", text)
+        self.assertIn(
+            "Research results exported to: research_results.json",
+            text,
+        )
+        self.assertIn("Research workflow completed.", text)
 
     @patch("src.agent.discovery_agent.LiteratureRetriever.search")
     def test_invalid_question_stops_workflow(self, mock_search):
@@ -65,6 +90,47 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         self.assertFalse(result)
         mock_search.assert_not_called()
         self.assertIn("Invalid research question", output.getvalue())
+
+    @patch("src.agent.discovery_agent.ResultExporter.export_json")
+    @patch("src.agent.discovery_agent.LiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
+    def test_export_failure_does_not_crash_agent(
+        self, mock_plan, mock_search, mock_export
+    ):
+        mock_plan.return_value = self.plan
+        mock_search.return_value = [self.paper]
+        mock_export.side_effect = OSError("Disk is unavailable")
+
+        agent = ScientificDiscoveryAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            result = agent.run(self.question)
+
+        self.assertTrue(result)
+        mock_export.assert_called_once()
+        self.assertIn("Research result export failed", output.getvalue())
+        self.assertIn("Research workflow completed.", output.getvalue())
+
+    @patch("src.agent.discovery_agent.ResultExporter.export_json")
+    @patch("src.agent.discovery_agent.LiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
+    def test_no_papers_skips_export(
+        self, mock_plan, mock_search, mock_export
+    ):
+        mock_plan.return_value = self.plan
+        mock_search.return_value = []
+
+        agent = ScientificDiscoveryAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            result = agent.run(self.question)
+
+        self.assertTrue(result)
+        self.assertIn("No papers were found", output.getvalue())
+        mock_export.assert_not_called()
+        self.assertIn("Research workflow completed.", output.getvalue())
 
     @patch("src.agent.discovery_agent.LiteratureRetriever.search")
     @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
@@ -89,4 +155,3 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
