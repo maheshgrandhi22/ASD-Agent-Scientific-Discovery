@@ -1,9 +1,11 @@
-﻿import requests
+﻿
+import requests
 
 from input_validator import validate_research_question
 from src.agent.research_planner import ResearchPlanner
 from src.agent.literature_retriever import LiteratureRetriever
 from src.agent.findings_analyzer import FindingsAnalyzer
+from src.agent.result_exporter import ResultExporter
 
 
 class ScientificDiscoveryAgent:
@@ -12,6 +14,7 @@ class ScientificDiscoveryAgent:
         self.planner = ResearchPlanner()
         self.literature_retriever = LiteratureRetriever()
         self.findings_analyzer = FindingsAnalyzer()
+        self.result_exporter = ResultExporter()
 
     def run(self, research_question):
         valid, message = validate_research_question(research_question)
@@ -84,6 +87,25 @@ class ScientificDiscoveryAgent:
                         )
                 else:
                     print("No common themes identified.")
+
+                # Export the research results to JSON.
+                export_data = {
+                    "research_question": research_question,
+                    "research_plan": plan,
+                    "analyzed_papers": analyzed,
+                    "research_summary": report,
+                }
+
+                try:
+                    output_path = self.result_exporter.export_json(
+                        export_data
+                    )
+                    print(
+                        "\nResearch results exported to: "
+                        f"{output_path}"
+                    )
+                except (OSError, TypeError, ValueError) as error:
+                    print(f"Research result export failed: {error}")
 
         except (requests.RequestException, ValueError) as error:
             print(f"Literature search unavailable: {error}")
