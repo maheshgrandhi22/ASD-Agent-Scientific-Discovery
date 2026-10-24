@@ -1,4 +1,5 @@
-﻿import unittest
+﻿
+import unittest
 from unittest.mock import Mock, patch
 
 import requests
@@ -55,8 +56,8 @@ class TestLiteratureRetriever(unittest.TestCase):
 
     def test_http_error_is_propagated(self):
         response = Mock()
-        response.raise_for_status.side_effect = (
-            requests.HTTPError("Server error")
+        response.raise_for_status.side_effect = requests.HTTPError(
+            "Server error"
         )
 
         with patch(
@@ -65,6 +66,59 @@ class TestLiteratureRetriever(unittest.TestCase):
         ):
             with self.assertRaises(requests.HTTPError):
                 self.retriever.search("science", 1)
+
+    def test_missing_paper_metadata_uses_empty_defaults(self):
+        xml = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <id>https://arxiv.org/abs/9999.0001</id>
+          </entry>
+        </feed>"""
+
+        response = Mock()
+        response.content = xml.encode("utf-8")
+
+        with patch(
+            "src.agent.literature_retriever.requests.get",
+            return_value=response,
+        ):
+            papers = self.retriever.search("drug discovery", 1)
+
+        self.assertEqual(len(papers), 1)
+        self.assertEqual(papers[0]["title"], "")
+        self.assertEqual(papers[0]["abstract"], "")
+        self.assertEqual(papers[0]["authors"], [])
+        self.assertEqual(papers[0]["published"], "")
+        self.assertEqual(
+            papers[0]["url"],
+            "https://arxiv.org/abs/9999.0001",
+        )
+
+    def test_paper_text_whitespace_is_normalized(self):
+        xml = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <title>  AI
+              for   Drug Discovery  </title>
+            <summary>  AI can
+              accelerate   research. </summary>
+          </entry>
+        </feed>"""
+
+        response = Mock()
+        response.content = xml.encode("utf-8")
+
+        with patch(
+            "src.agent.literature_retriever.requests.get",
+            return_value=response,
+        ):
+            papers = self.retriever.search("drug discovery", 1)
+
+        self.assertEqual(papers[0]["title"], "AI for Drug Discovery")
+        self.assertEqual(
+            papers[0]["abstract"],
+            "AI can accelerate research.",
+        )
 
 
 if __name__ == "__main__":
