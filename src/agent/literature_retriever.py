@@ -1,4 +1,5 @@
-﻿import re
+﻿
+import re
 import requests
 import xml.etree.ElementTree as ET
 
@@ -16,6 +17,7 @@ class LiteratureRetriever:
     }
 
     def search(self, query, max_results=5):
+        """Search arXiv and return unique papers with their metadata."""
         if not isinstance(query, str) or not query.strip():
             raise ValueError("Search query cannot be empty.")
 
@@ -53,6 +55,7 @@ class LiteratureRetriever:
         namespace = {"atom": "http://www.w3.org/2005/Atom"}
 
         papers = []
+        seen_urls = set()
 
         for entry in root.findall("atom:entry", namespace):
             title = entry.findtext(
@@ -70,13 +73,25 @@ class LiteratureRetriever:
                 for author in entry.findall("atom:author", namespace)
             ]
 
+            url = entry.findtext(
+                "atom:id", default="", namespaces=namespace
+            ).strip()
+
+            # Normalize URLs to detect duplicates.
+            normalized_url = url.rstrip("/").casefold()
+
+            # Skip duplicate entries when a URL is available.
+            if normalized_url and normalized_url in seen_urls:
+                continue
+
+            if normalized_url:
+                seen_urls.add(normalized_url)
+
             papers.append({
                 "title": " ".join(title.split()),
                 "authors": authors,
                 "abstract": " ".join(summary.split()),
-                "url": entry.findtext(
-                    "atom:id", default="", namespaces=namespace
-                ).strip(),
+                "url": url,
                 "published": entry.findtext(
                     "atom:published", default="", namespaces=namespace
                 ).strip(),
