@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import requests
+import xml.etree.ElementTree as ET
 
 from src.agent.literature_retriever import LiteratureRetriever
 
@@ -21,6 +22,7 @@ SAMPLE_XML = """<?xml version="1.0"?>
 
 
 class TestLiteratureRetriever(unittest.TestCase):
+
     def setUp(self):
         self.retriever = LiteratureRetriever()
 
@@ -118,6 +120,25 @@ class TestLiteratureRetriever(unittest.TestCase):
         self.assertEqual(
             papers[0]["abstract"],
             "AI can accelerate research.",
+        )
+
+    def test_malformed_xml_response_raises_clear_error(self):
+        response = Mock()
+        response.content = b"<feed><entry><title>Incomplete"
+
+        with patch(
+            "src.agent.literature_retriever.requests.get",
+            return_value=response,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "Invalid XML response received from arXiv",
+            ) as context:
+                self.retriever.search("drug discovery", 1)
+
+        self.assertIsInstance(
+            context.exception.__cause__,
+            ET.ParseError,
         )
 
 

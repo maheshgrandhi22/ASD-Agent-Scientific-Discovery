@@ -51,7 +51,13 @@ class LiteratureRetriever:
         )
         response.raise_for_status()
 
-        root = ET.fromstring(response.content)
+        try:
+            root = ET.fromstring(response.content)
+        except ET.ParseError as exc:
+            raise ValueError(
+                "Invalid XML response received from arXiv."
+            ) from exc
+
         namespace = {"atom": "http://www.w3.org/2005/Atom"}
 
         papers = []
