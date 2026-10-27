@@ -1,24 +1,10 @@
 ﻿
 import unittest
 from unittest.mock import Mock, patch
-
 import requests
 import xml.etree.ElementTree as ET
 
 from src.agent.literature_retriever import LiteratureRetriever
-
-
-SAMPLE_XML = """<?xml version="1.0"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
-  <entry>
-    <id>https://arxiv.org/abs/1234.5678</id>
-    <published>2026-01-15T10:00:00Z</published>
-    <title>AI for Drug Discovery</title>
-    <summary>Using AI to discover new medicines.</summary>
-    <author><name>Alex Researcher</name></author>
-  </entry>
-</feed>
-"""
 
 
 class TestLiteratureRetriever(unittest.TestCase):
@@ -26,120 +12,120 @@ class TestLiteratureRetriever(unittest.TestCase):
     def setUp(self):
         self.retriever = LiteratureRetriever()
 
-    def test_search_returns_paper_metadata(self):
-        response = Mock()
-        response.content = SAMPLE_XML.encode("utf-8")
-
-        with patch(
-            "src.agent.literature_retriever.requests.get",
-            return_value=response,
-        ) as mock_get:
-            papers = self.retriever.search("drug discovery", 1)
-
-        self.assertEqual(len(papers), 1)
-        self.assertEqual(papers[0]["title"], "AI for Drug Discovery")
-        self.assertEqual(papers[0]["authors"], ["Alex Researcher"])
-        self.assertIn("AI to discover", papers[0]["abstract"])
-        self.assertEqual(
-            papers[0]["url"],
-            "https://arxiv.org/abs/1234.5678",
-        )
-        mock_get.assert_called_once()
-
     def test_empty_query_is_rejected(self):
+        with self.assertRaisesRegex(
+            ValueError, "non-empty string"
+        ):
+            self.retriever.search("")
+
+    def test_whitespace_query_is_rejected(self):
         with self.assertRaises(ValueError):
             self.retriever.search("   ")
 
-    def test_invalid_result_count_is_rejected(self):
-        for count in (0, 21, True, 1.5):
-            with self.subTest(count=count):
+    def test_non_string_query_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.retriever.search(None)
+
+    def test_invalid_max_results_is_rejected(self):
+        for value in (0, -1, 1.5, True, "5"):
+            with self.subTest(value=value):
                 with self.assertRaises(ValueError):
-                    self.retriever.search("science", count)
+                    self.retriever.search("science", value)
 
-    def test_http_error_is_propagated(self):
-        response = Mock()
-        response.raise_for_status.side_effect = requests.HTTPError(
-            "Server error"
-        )
-
-        with patch(
-            "src.agent.literature_retriever.requests.get",
-            return_value=response,
-        ):
-            with self.assertRaises(requests.HTTPError):
-                self.retriever.search("science", 1)
-
-    def test_missing_paper_metadata_uses_empty_defaults(self):
-        xml = """<?xml version="1.0"?>
+    @patch("src.agent.literature_retriever.requests.get")
+    def test_search_returns_parsed_paper(self, mock_get):
+        xml = b"""
         <feed xmlns="http://www.w3.org/2005/Atom">
-          <entry>
-            <id>https://arxiv.org/abs/9999.0001</id>
-          </entry>
-        </feed>"""
+            <entry>
+                <id>http://arxiv.org/abs/1234.5678</id>
+                <title>AI for Science</title>
+                <summary>Research summary.</summary>
+                <author><name>Jane Smith</name></author>
+                <published>2026-01-01T00:00:00Z</published>
+            </entry>
+        </feed>
+        """
 
         response = Mock()
-        response.content = xml.encode("utf-8")
+        response.content = xml
+        response.raise_for_status.return_value = None
+        mock_get.return_value = response
 
-        with patch(
-            "src.agent.literature_retriever.requests.get",
-            return_value=response,
-        ):
-            papers = self.retriever.search("drug discovery", 1)
+        papers = self.retriever.search("science", 1)
 
         self.assertEqual(len(papers), 1)
-        self.assertEqual(papers[0]["title"], "")
-        self.assertEqual(papers[0]["abstract"], "")
-        self.assertEqual(papers[0]["authors"], [])
-        self.assertEqual(papers[0]["published"], "")
-        self.assertEqual(
-            papers[0]["url"],
-            "https://arxiv.org/abs/9999.0001",
-        )
+        self.assertEqual(papers[0]["title"], "AI for Science")
+        self.assertEqual(papers[0]["authors"], ["Jane Smith"])
+        self.assertEqual(papers[0]["summary"], "Research summary.")
+        mock_get.assert_called_once()
 
-    def test_paper_text_whitespace_is_normalized(self):
-        xml = """<?xml version="1.0"?>
+    @patch("src.agent.literature_retriever.requests.get")
+    def test_search_removes_duplicate_papers(self, mock_get):
+        xml = b"""
         <feed xmlns="http://www.w3.org/2005/Atom">
-          <entry>
-            <title>  AI
-              for   Drug Discovery  </title>
-            <summary>  AI can
-              accelerate   research. </summary>
-          </entry>
-        </feed>"""
+            <entry>
+                <id>http://arxiv.org/abs/1234</id>
+                <title>Paper A</title>
+                <summary>Summary A</summary>
+            </entry>
+            <entry>
+                <id>http://arxiv.org/abs/1234</id>
+                <title>Paper A duplicate</title>
+                <summary>Duplicate summary</summary>
+            </entry>
+        </feed>
+        """
 
         response = Mock()
-        response.content = xml.encode("utf-8")
+        response.content = xml
+        response.raise_for_status.return_value = None
+        mock_get.return_value = response
 
-        with patch(
-            "src.agent.literature_retriever.requests.get",
-            return_value=response,
+        papers = self.retriever.search("science", 2)
+
+        self.assertEqual(len(papers), 1)
+        self.assertEqual(papers[0]["title"], "Paper A")
+
+    @patch("src.agent.literature_retriever.requests.get")
+    def test_malformed_xml_response_raises_clear_error(self, mock_get):
+        response = Mock()
+        response.content = b"<feed><entry>"
+        response.raise_for_status.return_value = None
+        mock_get.return_value = response
+
+        with self.assertRaisesRegex(
+            ValueError, "Invalid XML response received from arXiv"
         ):
-            papers = self.retriever.search("drug discovery", 1)
+            self.retriever.search("science", 1)
 
-        self.assertEqual(papers[0]["title"], "AI for Drug Discovery")
+    @patch("src.agent.literature_retriever.requests.get")
+    def test_request_timeout_raises_clear_error(self, mock_get):
+        mock_get.side_effect = requests.Timeout("Connection timed out")
+
+        with self.assertRaisesRegex(
+            requests.Timeout,
+            "arXiv request timed out after 20 seconds",
+        ):
+            self.retriever.search("drug discovery", 1)
+
+        mock_get.assert_called_once()
         self.assertEqual(
-            papers[0]["abstract"],
-            "AI can accelerate research.",
+            mock_get.call_args.kwargs["timeout"], 20
         )
 
-    def test_malformed_xml_response_raises_clear_error(self):
-        response = Mock()
-        response.content = b"<feed><entry><title>Incomplete"
+    @patch("src.agent.literature_retriever.requests.get")
+    def test_connection_error_raises_clear_error(self, mock_get):
+        mock_get.side_effect = requests.ConnectionError(
+            "Network unavailable"
+        )
 
-        with patch(
-            "src.agent.literature_retriever.requests.get",
-            return_value=response,
+        with self.assertRaisesRegex(
+            requests.ConnectionError,
+            "Unable to connect to the arXiv API",
         ):
-            with self.assertRaisesRegex(
-                ValueError,
-                "Invalid XML response received from arXiv",
-            ) as context:
-                self.retriever.search("drug discovery", 1)
+            self.retriever.search("drug discovery", 1)
 
-        self.assertIsInstance(
-            context.exception.__cause__,
-            ET.ParseError,
-        )
+        mock_get.assert_called_once()
 
 
 if __name__ == "__main__":

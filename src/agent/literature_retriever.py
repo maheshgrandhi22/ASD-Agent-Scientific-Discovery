@@ -1,54 +1,42 @@
 ﻿
-import re
 import requests
 import xml.etree.ElementTree as ET
 
 
 class LiteratureRetriever:
-    """Search arXiv for scientific papers."""
-
     API_URL = "https://export.arxiv.org/api/query"
-
-    STOPWORDS = {
-        "a", "an", "and", "are", "can", "could", "do", "does",
-        "for", "from", "how", "in", "is", "of", "on", "or",
-        "the", "to", "what", "which", "why", "with",
-        "improve", "using", "use", "based", "new", "study",
-    }
+    REQUEST_TIMEOUT = 20
 
     def search(self, query, max_results=5):
-        """Search arXiv and return unique papers with their metadata."""
         if not isinstance(query, str) or not query.strip():
-            raise ValueError("Search query cannot be empty.")
+            raise ValueError("Search query must be a non-empty string.")
 
-        if not isinstance(max_results, int) or isinstance(max_results, bool):
-            raise ValueError("max_results must be an integer.")
+        if not isinstance(max_results, int) or isinstance(max_results, bool) or max_results < 1:
+            raise ValueError("max_results must be a positive integer.")
 
-        if not 1 <= max_results <= 20:
-            raise ValueError("max_results must be between 1 and 20.")
+        search_expression = f'all:"{query.strip()}"'
 
-        keywords = [
-            word for word in re.findall(r"[a-zA-Z0-9]+", query.lower())
-            if word not in self.STOPWORDS
-        ]
+        try:
+            response = requests.get(
+                self.API_URL,
+                params={
+                    "search_query": search_expression,
+                    "start": 0,
+                    "max_results": max_results,
+                    "sortBy": "relevance",
+                },
+                timeout=self.REQUEST_TIMEOUT,
+            )
+        except requests.Timeout as exc:
+            raise requests.Timeout(
+                f"arXiv request timed out after "
+                f"{self.REQUEST_TIMEOUT} seconds."
+            ) from exc
+        except requests.ConnectionError as exc:
+            raise requests.ConnectionError(
+                "Unable to connect to the arXiv API."
+            ) from exc
 
-        if not keywords:
-            raise ValueError("Search query must contain useful keywords.")
-
-        search_expression = " AND ".join(
-            f"all:{word}" for word in dict.fromkeys(keywords)
-        )
-
-        response = requests.get(
-            self.API_URL,
-            params={
-                "search_query": search_expression,
-                "start": 0,
-                "max_results": max_results,
-                "sortBy": "relevance",
-            },
-            timeout=20,
-        )
         response.raise_for_status()
 
         try:
@@ -58,12 +46,21 @@ class LiteratureRetriever:
                 "Invalid XML response received from arXiv."
             ) from exc
 
-        namespace = {"atom": "http://www.w3.org/2005/Atom"}
+        namespace = {
+            "atom": "http://www.w3.org/2005/Atom",
+        }
 
         papers = []
-        seen_urls = set()
+        seen_ids = set()
 
         for entry in root.findall("atom:entry", namespace):
+            paper_id = entry.findtext("atom:id", default="", namespaces=namespace)
+
+            if not paper_id or paper_id in seen_ids:
+                continue
+
+            seen_ids.add(paper_id)
+
             title = entry.findtext(
                 "atom:title", default="", namespaces=namespace
             ).strip()
@@ -75,32 +72,22 @@ class LiteratureRetriever:
             authors = [
                 author.findtext(
                     "atom:name", default="", namespaces=namespace
-                )
+                ).strip()
                 for author in entry.findall("atom:author", namespace)
             ]
 
-            url = entry.findtext(
-                "atom:id", default="", namespaces=namespace
-            ).strip()
+            published = entry.findtext(
+                "atom:published", default="", namespaces=namespace
+            )
 
-            # Normalize URLs to detect duplicates.
-            normalized_url = url.rstrip("/").casefold()
-
-            # Skip duplicate entries when a URL is available.
-            if normalized_url and normalized_url in seen_urls:
-                continue
-
-            if normalized_url:
-                seen_urls.add(normalized_url)
-
-            papers.append({
-                "title": " ".join(title.split()),
-                "authors": authors,
-                "abstract": " ".join(summary.split()),
-                "url": url,
-                "published": entry.findtext(
-                    "atom:published", default="", namespaces=namespace
-                ).strip(),
-            })
+            papers.append(
+                {
+                    "id": paper_id,
+                    "title": title,
+                    "summary": summary,
+                    "authors": authors,
+                    "published": published,
+                }
+            )
 
         return papers
