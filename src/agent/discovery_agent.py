@@ -1,4 +1,5 @@
-﻿import requests
+﻿
+import requests
 
 from input_validator import validate_research_question
 from src.agent.research_planner import ResearchPlanner
@@ -13,12 +14,13 @@ from src.agent.agent_roles import (
     HypothesisGenerator,
     CodeExecutor,
 )
+from src.agent.vector_store import ScientificVectorStore
 
 
 class ScientificDiscoveryAgent:
     """Coordinate the scientific discovery workflow."""
 
-    def __init__(self):
+    def __init__(self, vector_store=None):
         self.name = "Autonomous Scientific Discovery Agent"
         self.planner = ResearchPlanner()
 
@@ -35,6 +37,9 @@ class ScientificDiscoveryAgent:
         self.hypothesis_generator = HypothesisGenerator()
         self.code_executor = CodeExecutor()
         self.result_exporter = ResultExporter()
+
+        # Allow injection of a persistent store for testing or reuse.
+        self.vector_store = vector_store
 
     def run(self, research_question):
         """Run the scientific discovery workflow."""
@@ -62,7 +67,7 @@ class ScientificDiscoveryAgent:
         print("\n=== Scientific Literature Search ===")
 
         try:
-            # Retrieve papers once from the configured sources.
+            # Retrieve papers from the configured literature sources.
             papers = self.multi_source_retriever.search(
                 research_question,
                 max_results=3,
@@ -70,120 +75,154 @@ class ScientificDiscoveryAgent:
 
             if not papers:
                 print("No papers were found for this query.")
-            else:
-                # Analyze the already retrieved papers; do not search again.
-                review = self.literature_reviewer.review(
+                print("\nResearch workflow completed.")
+                return True
+
+            # Store papers and retrieve semantically relevant evidence.
+            retrieved_evidence = []
+
+            try:
+                if self.vector_store is None:
+                    self.vector_store = ScientificVectorStore()
+
+                stored_count = self.vector_store.add_papers(papers)
+
+                print(
+                    "\nPapers added or updated in vector store: "
+                    f"{stored_count}"
+                )
+
+                retrieved_evidence = self.vector_store.search(
                     research_question,
-                    max_results=3,
-                    papers=papers,
-                )
-                analyzed = review["_analyzed_papers"]
-
-                print("\n=== Literature Reviewer ===")
-                print(f"Papers reviewed: {review['paper_count']}")
-
-                print("\n=== Analyzed Research Findings ===")
-                for index, paper in enumerate(analyzed, start=1):
-                    print(f"\n{index}. {paper.get('title', 'Untitled')}")
-                    print(
-                        "   Relevance score: "
-                        f"{paper.get('relevance_score', 0)}%"
-                    )
-                    print(
-                        "   Authors: "
-                        f"{', '.join(paper.get('authors', []))}"
-                    )
-                    print(f"   Published: {paper.get('published', '')}")
-                    print(f"   URL: {paper.get('url', '')}")
-                    print(f"   Source: {paper.get('source', 'Unknown')}")
-
-                    findings = paper.get("key_findings", [])
-                    print("   Key findings:")
-                    if findings:
-                        for finding in findings:
-                            print(f"   - {finding}")
-                    else:
-                        print("   No key findings extracted.")
-
-                    print(f"   Abstract: {paper.get('abstract', '')}")
-
-                report = self.findings_analyzer.create_research_summary(
-                    research_question,
-                    analyzed,
+                    n_results=3,
                 )
 
-                literature_review = {
-                    "role": review["role"],
-                    "research_question": review["research_question"],
-                    "paper_count": review["paper_count"],
-                    "evidence": review["evidence"],
-                }
-
-                hypothesis_result = self.hypothesis_generator.generate(
-                    research_question,
-                    literature_review,
+                print(
+                    "Relevant papers retrieved from vector store: "
+                    f"{len(retrieved_evidence)}"
                 )
 
-                print("\n=== Hypothesis Generator ===")
-                hypotheses = hypothesis_result["hypotheses"]
-                print(f"Candidate hypotheses generated: {len(hypotheses)}")
+            except Exception as error:
+                # Vector storage is optional; preserve the research workflow.
+                print(f"Vector store unavailable: {error}")
+                retrieved_evidence = []
 
-                for index, item in enumerate(hypotheses, start=1):
-                    print(f"{index}. {item['hypothesis']}")
-                    print(
-                        "   Supporting paper: "
-                        f"{item['supporting_title']}"
-                    )
-                    print(
-                        "   Validation status: "
-                        f"{item['validation_status']}"
-                    )
+            # Analyze the original retrieved papers.
+            review = self.literature_reviewer.review(
+                research_question,
+                max_results=3,
+                papers=papers,
+            )
+            analyzed = review["_analyzed_papers"]
 
-                # Execution remains blocked until a secure sandbox exists.
-                execution_status = self.code_executor.execute(
-                    "print('Scientific experiment placeholder')"
+            print("\n=== Literature Reviewer ===")
+            print(f"Papers reviewed: {review['paper_count']}")
+
+            print("\n=== Analyzed Research Findings ===")
+            for index, paper in enumerate(analyzed, start=1):
+                print(f"\n{index}. {paper.get('title', 'Untitled')}")
+                print(
+                    "   Relevance score: "
+                    f"{paper.get('relevance_score', 0)}%"
                 )
 
-                print("\n=== Code Executor ===")
-                print(f"Execution status: {execution_status['status']}")
-                if execution_status.get("error"):
-                    print(execution_status["error"])
-
-                print("\n=== Scientific Research Summary ===")
-                print(f"Papers analyzed: {report['paper_count']}")
-                print(f"\nSummary: {report['summary']}")
-
-                print("\nCommon research themes:")
-                common_themes = report.get("common_themes", [])
-                if common_themes:
-                    for theme in common_themes:
-                        print(
-                            f"- {theme['theme']} "
-                            f"({theme['paper_count']} papers)"
-                        )
+                authors = paper.get("authors", [])
+                if isinstance(authors, list):
+                    authors_text = ", ".join(str(author) for author in authors)
                 else:
-                    print("No common themes identified.")
+                    authors_text = str(authors or "")
 
-                export_data = {
-                    "research_question": research_question,
-                    "research_plan": plan,
-                    "literature_review": literature_review,
-                    "analyzed_papers": analyzed,
-                    "research_summary": report,
-                    "hypothesis_generation": hypothesis_result,
-                    "code_execution": execution_status,
-                }
+                print(f"   Authors: {authors_text}")
+                print(f"   Published: {paper.get('published', '')}")
+                print(f"   URL: {paper.get('url', '')}")
+                print(f"   Source: {paper.get('source', 'Unknown')}")
 
-                try:
-                    output_path = self.result_exporter.export_json(
-                        export_data
-                    )
+                findings = paper.get("key_findings", [])
+                print("   Key findings:")
+                if findings:
+                    for finding in findings:
+                        print(f"   - {finding}")
+                else:
+                    print("   No key findings extracted.")
+
+                print(f"   Abstract: {paper.get('abstract', '')}")
+
+            report = self.findings_analyzer.create_research_summary(
+                research_question,
+                analyzed,
+            )
+
+            literature_review = {
+                "role": review["role"],
+                "research_question": review["research_question"],
+                "paper_count": review["paper_count"],
+                "evidence": review["evidence"],
+            }
+
+            hypothesis_result = self.hypothesis_generator.generate(
+                research_question,
+                literature_review,
+            )
+
+            print("\n=== Hypothesis Generator ===")
+            hypotheses = hypothesis_result["hypotheses"]
+            print(f"Candidate hypotheses generated: {len(hypotheses)}")
+
+            for index, item in enumerate(hypotheses, start=1):
+                print(f"{index}. {item['hypothesis']}")
+                print(
+                    "   Supporting paper: "
+                    f"{item['supporting_title']}"
+                )
+                print(
+                    "   Validation status: "
+                    f"{item['validation_status']}"
+                )
+
+            # Execution remains blocked until a secure sandbox exists.
+            execution_status = self.code_executor.execute(
+                "print('Scientific experiment placeholder')"
+            )
+
+            print("\n=== Code Executor ===")
+            print(f"Execution status: {execution_status['status']}")
+            if execution_status.get("error"):
+                print(execution_status["error"])
+
+            print("\n=== Scientific Research Summary ===")
+            print(f"Papers analyzed: {report['paper_count']}")
+            print(f"\nSummary: {report['summary']}")
+
+            print("\nCommon research themes:")
+            common_themes = report.get("common_themes", [])
+            if common_themes:
+                for theme in common_themes:
                     print(
-                        "\nResearch results exported to: "
-                        f"{output_path}"
+                        f"- {theme['theme']} "
+                        f"({theme['paper_count']} papers)"
                     )
-                except (OSError, TypeError, ValueError) as error:
-                    print(f"Research result export failed: {error}")
+            else:
+                print("No common themes identified.")
+
+            export_data = {
+                "research_question": research_question,
+                "research_plan": plan,
+                "literature_review": literature_review,
+                "analyzed_papers": analyzed,
+                "research_summary": report,
+                "hypothesis_generation": hypothesis_result,
+                "code_execution": execution_status,
+                "retrieved_evidence": retrieved_evidence,
+            }
+
+            try:
+                output_path = self.result_exporter.export_json(export_data)
+                print(
+                    "\nResearch results exported to: "
+                    f"{output_path}"
+                )
+            except (OSError, TypeError, ValueError) as error:
+                print(f"Research result export failed: {error}")
 
         except (
             requests.RequestException,
