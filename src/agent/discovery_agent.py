@@ -107,11 +107,14 @@ class ScientificDiscoveryAgent:
                 print(f"Vector store unavailable: {error}")
                 retrieved_evidence = []
 
-            # Analyze the original retrieved papers.
+            # Prefer semantically retrieved evidence when available.
+            # Fall back to original papers if vector search fails or is empty.
+            review_papers = retrieved_evidence or papers
+
             review = self.literature_reviewer.review(
                 research_question,
                 max_results=3,
-                papers=papers,
+                papers=review_papers,
             )
             analyzed = review["_analyzed_papers"]
 
@@ -128,7 +131,9 @@ class ScientificDiscoveryAgent:
 
                 authors = paper.get("authors", [])
                 if isinstance(authors, list):
-                    authors_text = ", ".join(str(author) for author in authors)
+                    authors_text = ", ".join(
+                        str(author) for author in authors
+                    )
                 else:
                     authors_text = str(authors or "")
 
