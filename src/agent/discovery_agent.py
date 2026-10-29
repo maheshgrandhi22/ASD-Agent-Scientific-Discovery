@@ -96,6 +96,13 @@ class ScientificDiscoveryAgent:
 
             # Store papers and retrieve semantically relevant evidence.
             retrieved_evidence = []
+            evidence_retrieval = {
+                "method": "direct_literature",
+                "status": "not_attempted",
+                "fallback_used": False,
+                "fallback_reason": None,
+                "papers_retrieved": 0,
+            }
 
             try:
                 if self.vector_store is None:
@@ -118,13 +125,41 @@ class ScientificDiscoveryAgent:
                     f"{len(retrieved_evidence)}"
                 )
 
+                if retrieved_evidence:
+                    evidence_retrieval = {
+                        "method": "vector_store",
+                        "status": "success",
+                        "fallback_used": False,
+                        "fallback_reason": None,
+                        "papers_retrieved": len(retrieved_evidence),
+                    }
+                else:
+                    evidence_retrieval = {
+                        "method": "direct_literature",
+                        "status": "fallback_empty_vector_search",
+                        "fallback_used": True,
+                        "fallback_reason": (
+                            "Vector store search returned no papers."
+                        ),
+                        "papers_retrieved": 0,
+                    }
+
             except Exception as error:
-                # Vector storage is optional; preserve the research workflow.
+                # Preserve the workflow and record why vector retrieval failed.
                 print(f"Vector store unavailable: {error}")
                 retrieved_evidence = []
+                evidence_retrieval = {
+                    "method": "direct_literature",
+                    "status": "fallback_vector_store_unavailable",
+                    "fallback_used": True,
+                    "fallback_reason": (
+                        f"{type(error).__name__}: {error}"
+                    ),
+                    "papers_retrieved": 0,
+                }
 
             # Prefer semantically retrieved evidence when available.
-            # Fall back to original papers if vector search fails or is empty.
+            # Record when the workflow falls back to the original papers.
             review_papers = retrieved_evidence or papers
 
             review = self.literature_reviewer.review(
@@ -262,6 +297,7 @@ class ScientificDiscoveryAgent:
                 "experiment_specification": experiment_specification,
                 "code_execution": execution_status,
                 "retrieved_evidence": retrieved_evidence,
+                "evidence_retrieval": evidence_retrieval,
             }
 
             try:

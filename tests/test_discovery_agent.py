@@ -68,6 +68,13 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
             "AI for Drug Discovery",
         )
         self.assertIn("research_summary", exported_data)
+        self.assertEqual(
+            exported_data["evidence_retrieval"]["method"],
+            "vector_store",
+        )
+        self.assertFalse(
+            exported_data["evidence_retrieval"]["fallback_used"]
+        )
 
         text = output.getvalue()
         self.assertIn("Scientific Discovery Research Plan", text)
@@ -248,6 +255,50 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
             execution["final_code"], "print('revised experiment')"
         )
         self.assertIn("Execution attempts: 2", output.getvalue())
+
+
+    @patch("src.agent.discovery_agent.ResultExporter.export_json")
+    @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
+    def test_vector_store_failure_is_recorded_and_falls_back(
+        self, mock_plan, mock_search, mock_export
+    ):
+        mock_plan.return_value = self.plan
+        mock_search.return_value = [self.paper]
+        mock_export.return_value = "research_results.json"
+
+        mock_store = Mock()
+        mock_store.add_papers.return_value = 1
+        mock_store.search.side_effect = RuntimeError(
+            "vector search unavailable"
+        )
+
+        agent = ScientificDiscoveryAgent(vector_store=mock_store)
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            result = agent.run(self.question)
+
+        self.assertTrue(result)
+        exported_data = mock_export.call_args.args[0]
+        retrieval = exported_data["evidence_retrieval"]
+
+        self.assertEqual(
+            retrieval["status"],
+            "fallback_vector_store_unavailable",
+        )
+        self.assertEqual(retrieval["method"], "direct_literature")
+        self.assertTrue(retrieval["fallback_used"])
+        self.assertIn(
+            "vector search unavailable",
+            retrieval["fallback_reason"],
+        )
+        self.assertEqual(retrieval["papers_retrieved"], 0)
+        self.assertEqual(exported_data["retrieved_evidence"], [])
+        self.assertEqual(
+            exported_data["literature_review"]["paper_count"], 1
+        )
+        self.assertIn("Vector store unavailable", output.getvalue())
 
 if __name__ == "__main__":
     unittest.main()
