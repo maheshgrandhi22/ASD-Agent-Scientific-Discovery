@@ -280,6 +280,68 @@ class TestCodeExecutor(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertIn("secure sandbox", result["error"])
 
+    def test_injected_sandbox_receives_code_and_timeout(self):
+        sandbox = Mock()
+        sandbox.execute.return_value = {
+            "status": "success",
+            "output": "ok",
+            "error": "",
+        }
+
+        result = CodeExecutor(sandbox=sandbox).execute(
+            "print('hello')",
+            timeout_seconds=5,
+        )
+
+        self.assertEqual(result["status"], "success")
+        sandbox.execute.assert_called_once_with(
+            "print('hello')",
+            timeout_seconds=5,
+        )
+
+    def test_sandbox_blocked_result_is_preserved(self):
+        sandbox = Mock()
+        sandbox.execute.return_value = {
+            "status": "blocked",
+            "output": "",
+            "error": "Docker unavailable",
+        }
+
+        result = CodeExecutor(sandbox=sandbox).execute("print('hello')")
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("Docker unavailable", result["error"])
+    def test_injected_sandbox_receives_code_and_timeout(self):
+        sandbox = Mock()
+        sandbox.execute.return_value = {
+            "status": "success",
+            "output": "ok",
+            "error": "",
+        }
+
+        result = CodeExecutor(sandbox=sandbox).execute(
+            "print('hello')",
+            timeout_seconds=5,
+        )
+
+        self.assertEqual(result["status"], "success")
+        sandbox.execute.assert_called_once_with(
+            "print('hello')",
+            timeout_seconds=5,
+        )
+
+    def test_sandbox_blocked_result_is_preserved(self):
+        sandbox = Mock()
+        sandbox.execute.return_value = {
+            "status": "blocked",
+            "output": "",
+            "error": "Docker unavailable",
+        }
+
+        result = CodeExecutor(sandbox=sandbox).execute("print('hello')")
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("Docker unavailable", result["error"])
     def test_empty_code_is_rejected(self):
         with self.assertRaises(ValueError):
             CodeExecutor().execute(" ")

@@ -140,7 +140,7 @@ class HypothesisGenerator:
 
 
 class CodeExecutor:
-    """Block execution until a secure sandbox is configured."""
+    """Execute code only through an explicitly configured sandbox."""
 
     def __init__(self, sandbox=None):
         self.sandbox = sandbox

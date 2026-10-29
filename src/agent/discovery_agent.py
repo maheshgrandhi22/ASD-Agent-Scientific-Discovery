@@ -1,4 +1,4 @@
-﻿
+
 import requests
 
 from input_validator import validate_research_question
@@ -15,12 +15,13 @@ from src.agent.agent_roles import (
     CodeExecutor,
 )
 from src.agent.vector_store import ScientificVectorStore
+from src.agent.experiment_feedback_loop import ExperimentFeedbackLoop
 
 
 class ScientificDiscoveryAgent:
     """Coordinate the scientific discovery workflow."""
 
-    def __init__(self, vector_store=None):
+    def __init__(self, vector_store=None, sandbox=None, code_reviser=None):
         self.name = "Autonomous Scientific Discovery Agent"
         self.planner = ResearchPlanner()
 
@@ -35,7 +36,15 @@ class ScientificDiscoveryAgent:
             analyzer=self.findings_analyzer,
         )
         self.hypothesis_generator = HypothesisGenerator()
-        self.code_executor = CodeExecutor()
+        self.code_executor = CodeExecutor(sandbox=sandbox)
+        self.feedback_loop = (
+            ExperimentFeedbackLoop(
+                executor=self.code_executor,
+                reviser=code_reviser,
+            )
+            if code_reviser is not None
+            else None
+        )
         self.result_exporter = ResultExporter()
 
         # Allow injection of a persistent store for testing or reuse.
@@ -184,15 +193,37 @@ class ScientificDiscoveryAgent:
                     f"{item['validation_status']}"
                 )
 
-            # Execution remains blocked until a secure sandbox exists.
-            execution_status = self.code_executor.execute(
-                "print('Scientific experiment placeholder')"
-            )
+            # This is a placeholder, not a generated scientific experiment.
+            experiment_code = "print('Scientific experiment placeholder')"
+
+            if self.feedback_loop is not None:
+                execution_status = self.feedback_loop.run(
+                    experiment_code,
+                    timeout_seconds=10,
+                    max_attempts=3,
+                )
+            else:
+                execution_status = self.code_executor.execute(
+                    experiment_code,
+                    timeout_seconds=10,
+                )
 
             print("\n=== Code Executor ===")
             print(f"Execution status: {execution_status['status']}")
-            if execution_status.get("error"):
-                print(execution_status["error"])
+
+            execution_error = execution_status.get("error")
+            nested_result = execution_status.get("result")
+            if not execution_error and isinstance(nested_result, dict):
+                execution_error = nested_result.get("error")
+
+            if execution_error:
+                print(execution_error)
+
+            if "attempts" in execution_status:
+                print(
+                    "Execution attempts: "
+                    f"{len(execution_status['attempts'])}"
+                )
 
             print("\n=== Scientific Research Summary ===")
             print(f"Papers analyzed: {report['paper_count']}")

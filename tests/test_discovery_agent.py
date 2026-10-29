@@ -156,5 +156,91 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         self.assertIn("Research workflow completed.", output.getvalue())
 
 
+    @patch("src.agent.discovery_agent.ResultExporter.export_json")
+    @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
+    def test_workflow_uses_injected_sandbox(
+        self, mock_plan, mock_search, mock_export
+    ):
+        mock_plan.return_value = self.plan
+        mock_search.return_value = [self.paper]
+        mock_export.return_value = "research_results.json"
+
+        sandbox = Mock()
+        sandbox.execute.return_value = {
+            "status": "success",
+            "output": "experiment completed",
+            "error": "",
+            "return_code": 0,
+        }
+
+        agent = ScientificDiscoveryAgent(sandbox=sandbox)
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            result = agent.run(self.question)
+
+        self.assertTrue(result)
+        sandbox.execute.assert_called_once_with(
+            "print('Scientific experiment placeholder')",
+            timeout_seconds=10,
+        )
+        exported_data = mock_export.call_args.args[0]
+        self.assertEqual(
+            exported_data["code_execution"]["status"], "success"
+        )
+        self.assertIn("Execution status: success", output.getvalue())
+
+    @patch("src.agent.discovery_agent.ResultExporter.export_json")
+    @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
+    def test_workflow_revises_failed_experiment(
+        self, mock_plan, mock_search, mock_export
+    ):
+        mock_plan.return_value = self.plan
+        mock_search.return_value = [self.paper]
+        mock_export.return_value = "research_results.json"
+
+        sandbox = Mock()
+        sandbox.execute.side_effect = [
+            {
+                "status": "error",
+                "output": "",
+                "error": "SyntaxError",
+            },
+            {
+                "status": "success",
+                "output": "experiment completed",
+                "error": "",
+                "return_code": 0,
+            },
+        ]
+
+        reviser = Mock(return_value="print('revised experiment')")
+        agent = ScientificDiscoveryAgent(
+            sandbox=sandbox,
+            code_reviser=reviser,
+        )
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            result = agent.run(self.question)
+
+        self.assertTrue(result)
+        self.assertEqual(sandbox.execute.call_count, 2)
+        reviser.assert_called_once_with(
+            "print('Scientific experiment placeholder')",
+            "SyntaxError",
+            1,
+        )
+        exported_data = mock_export.call_args.args[0]
+        execution = exported_data["code_execution"]
+        self.assertEqual(execution["status"], "success")
+        self.assertEqual(len(execution["attempts"]), 2)
+        self.assertEqual(
+            execution["final_code"], "print('revised experiment')"
+        )
+        self.assertIn("Execution attempts: 2", output.getvalue())
+
 if __name__ == "__main__":
     unittest.main()
