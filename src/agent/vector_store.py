@@ -1,4 +1,3 @@
-
 import hashlib
 from pathlib import Path
 
@@ -119,9 +118,19 @@ class ScientificVectorStore:
         for paper_id, document, metadata, distance in zip(
             ids, documents, metadatas, distances
         ):
+            stored_document = document or ""
+            abstract = ""
+
+            if "Abstract:" in stored_document:
+                abstract = stored_document.split(
+                    "Abstract:", 1
+                )[1].strip()
+
             papers.append({
                 "id": paper_id,
                 "title": metadata.get("title", "Untitled"),
+                "abstract": abstract,
+                "summary": abstract,
                 "url": metadata.get("url", ""),
                 "source": metadata.get("source", "Unknown"),
                 "published": metadata.get("published", ""),
@@ -129,8 +138,7 @@ class ScientificVectorStore:
                     name for name in metadata.get("authors", "").split(", ")
                     if name
                 ],
-                "document": document,
+                "document": stored_document,
                 "distance": distance,
             })
-
         return papers

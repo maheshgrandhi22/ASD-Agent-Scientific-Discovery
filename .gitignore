@@ -11,4 +11,5 @@ data/raw/*
 data/processed/*
 # Generated scientific research artifacts
 data/vector_db/
+data/vector_db_papers_backup.json
 research_results.json

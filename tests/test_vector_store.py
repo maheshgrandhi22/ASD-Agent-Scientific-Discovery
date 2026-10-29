@@ -1,4 +1,3 @@
-
 import tempfile
 import unittest
 
@@ -81,6 +80,15 @@ class TestScientificVectorStore(unittest.TestCase):
         self.assertIn("distance", results[0])
         self.assertIn("url", results[0])
 
+    def test_search_restores_abstract_from_stored_document(self):
+        paper = self.sample_papers()[0]
+        self.store.add_papers([paper])
+
+        results = self.store.search("machine learning drug discovery")
+
+        self.assertGreaterEqual(len(results), 1)
+        self.assertEqual(results[0]["abstract"], paper["abstract"])
+        self.assertEqual(results[0]["summary"], paper["abstract"])
     def test_upsert_updates_existing_paper(self):
         paper = self.sample_papers()[0]
         self.store.add_papers([paper])
