@@ -181,11 +181,17 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
             result = agent.run(self.question)
 
         self.assertTrue(result)
+        exported_data = mock_export.call_args.args[0]
+        experiment = exported_data["experiment_specification"]
+        expected_code = experiment["code"]
+        self.assertIn(self.question, expected_code)
+        self.assertEqual(
+            experiment["experiment_type"], "baseline_context_check"
+        )
         sandbox.execute.assert_called_once_with(
-            "print('Scientific experiment placeholder')",
+            expected_code,
             timeout_seconds=10,
         )
-        exported_data = mock_export.call_args.args[0]
         self.assertEqual(
             exported_data["code_execution"]["status"], "success"
         )
@@ -228,12 +234,13 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertEqual(sandbox.execute.call_count, 2)
+        exported_data = mock_export.call_args.args[0]
+        initial_code = exported_data["experiment_specification"]["code"]
         reviser.assert_called_once_with(
-            "print('Scientific experiment placeholder')",
+            initial_code,
             "SyntaxError",
             1,
         )
-        exported_data = mock_export.call_args.args[0]
         execution = exported_data["code_execution"]
         self.assertEqual(execution["status"], "success")
         self.assertEqual(len(execution["attempts"]), 2)

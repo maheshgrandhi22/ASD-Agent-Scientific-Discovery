@@ -16,12 +16,16 @@ from src.agent.agent_roles import (
 )
 from src.agent.vector_store import ScientificVectorStore
 from src.agent.experiment_feedback_loop import ExperimentFeedbackLoop
+from src.agent.experiment_builder import ScientificExperimentBuilder
 
 
 class ScientificDiscoveryAgent:
     """Coordinate the scientific discovery workflow."""
 
-    def __init__(self, vector_store=None, sandbox=None, code_reviser=None):
+    def __init__(
+        self, vector_store=None, sandbox=None, code_reviser=None,
+        experiment_builder=None,
+    ):
         self.name = "Autonomous Scientific Discovery Agent"
         self.planner = ResearchPlanner()
 
@@ -36,6 +40,9 @@ class ScientificDiscoveryAgent:
             analyzer=self.findings_analyzer,
         )
         self.hypothesis_generator = HypothesisGenerator()
+        self.experiment_builder = (
+            experiment_builder or ScientificExperimentBuilder()
+        )
         self.code_executor = CodeExecutor(sandbox=sandbox)
         self.feedback_loop = (
             ExperimentFeedbackLoop(
@@ -193,8 +200,13 @@ class ScientificDiscoveryAgent:
                     f"{item['validation_status']}"
                 )
 
-            # This is a placeholder, not a generated scientific experiment.
-            experiment_code = "print('Scientific experiment placeholder')"
+            # Build a reproducible baseline from the current research context.
+            experiment_specification = self.experiment_builder.build(
+                research_question,
+                hypotheses=hypotheses,
+                evidence=literature_review.get("evidence", []),
+            )
+            experiment_code = experiment_specification["code"]
 
             if self.feedback_loop is not None:
                 execution_status = self.feedback_loop.run(
@@ -247,6 +259,7 @@ class ScientificDiscoveryAgent:
                 "analyzed_papers": analyzed,
                 "research_summary": report,
                 "hypothesis_generation": hypothesis_result,
+                "experiment_specification": experiment_specification,
                 "code_execution": execution_status,
                 "retrieved_evidence": retrieved_evidence,
             }
