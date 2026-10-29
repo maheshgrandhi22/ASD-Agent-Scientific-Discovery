@@ -1,10 +1,9 @@
-﻿
 import io
 import unittest
 import requests
 
 from contextlib import redirect_stdout
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from src.agent.discovery_agent import ScientificDiscoveryAgent
 
@@ -31,7 +30,7 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         }
 
     @patch("src.agent.discovery_agent.ResultExporter.export_json")
-    @patch("src.agent.discovery_agent.LiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
     @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
     def test_complete_workflow(
         self, mock_plan, mock_search, mock_export
@@ -40,7 +39,11 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         mock_search.return_value = [self.paper]
         mock_export.return_value = "research_results.json"
 
-        agent = ScientificDiscoveryAgent()
+        mock_store = Mock()
+        mock_store.add_papers.return_value = 1
+        mock_store.search.return_value = [self.paper]
+
+        agent = ScientificDiscoveryAgent(vector_store=mock_store)
         output = io.StringIO()
 
         with redirect_stdout(output):
@@ -92,7 +95,7 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         self.assertIn("Invalid research question", output.getvalue())
 
     @patch("src.agent.discovery_agent.ResultExporter.export_json")
-    @patch("src.agent.discovery_agent.LiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
     @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
     def test_export_failure_does_not_crash_agent(
         self, mock_plan, mock_search, mock_export
@@ -113,7 +116,7 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         self.assertIn("Research workflow completed.", output.getvalue())
 
     @patch("src.agent.discovery_agent.ResultExporter.export_json")
-    @patch("src.agent.discovery_agent.LiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
     @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
     def test_no_papers_skips_export(
         self, mock_plan, mock_search, mock_export
@@ -132,7 +135,7 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         mock_export.assert_not_called()
         self.assertIn("Research workflow completed.", output.getvalue())
 
-    @patch("src.agent.discovery_agent.LiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
     @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
     def test_literature_failure_does_not_crash_agent(
         self, mock_plan, mock_search

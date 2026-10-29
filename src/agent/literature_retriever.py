@@ -1,4 +1,3 @@
-﻿
 import requests
 import xml.etree.ElementTree as ET
 
@@ -14,7 +13,19 @@ class LiteratureRetriever:
         if not isinstance(max_results, int) or isinstance(max_results, bool) or max_results < 1:
             raise ValueError("max_results must be a positive integer.")
 
-        search_expression = f'all:"{query.strip()}"'
+        search_terms = query.strip().rstrip("?!.")
+        search_terms = " ".join(
+            word for word in search_terms.split()
+            if word.lower() not in {
+                "how", "what", "why", "when", "where",
+                "can", "could", "does", "do", "is", "are",
+                "the", "a", "an", "to"
+            }
+        )
+
+        search_expression = " AND ".join(
+            f'all:"{word}"' for word in search_terms.split()
+        )
 
         try:
             response = requests.get(

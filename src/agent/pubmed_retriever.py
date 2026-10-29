@@ -1,4 +1,3 @@
-
 import xml.etree.ElementTree as ET
 
 import requests
@@ -22,11 +21,21 @@ class PubMedRetriever:
         ):
             raise ValueError("max_results must be a positive integer.")
 
+        search_terms = query.strip().rstrip("?!.")
+        search_terms = " ".join(
+            word for word in search_terms.split()
+            if word.lower() not in {
+                "how", "what", "why", "when", "where",
+                "can", "could", "does", "do", "is", "are",
+                "the", "a", "an", "to"
+            }
+        )
+
         search_response = requests.get(
             self.SEARCH_URL,
             params={
                 "db": "pubmed",
-                "term": query.strip(),
+                "term": search_terms,
                 "retmax": max_results,
                 "retmode": "json",
                 "sort": "relevance",
