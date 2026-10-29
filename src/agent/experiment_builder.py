@@ -92,6 +92,7 @@ class ScientificExperimentBuilder:
 
             if content_type:
                 source = paper.get("source")
+                paper_id = paper.get("paper_id") or paper.get("id")
                 valid_evidence.append({
                     "title": title.strip(),
                     "source": (
@@ -99,6 +100,15 @@ class ScientificExperimentBuilder:
                     ),
                     "content_type": content_type,
                     "content_length": content_length,
+                    "paper_id": (
+                        str(paper_id).strip()
+                        if paper_id is not None and str(paper_id).strip()
+                        else None
+                    ),
+                    "url": (
+                        paper.get("url")
+                        if isinstance(paper.get("url"), str) else None
+                    ),
                 })
 
         # Require finite numeric measurements; bools are not measurements.
@@ -119,6 +129,41 @@ class ScientificExperimentBuilder:
                 continue
             valid_rows.append({
                 field: float(row[field]) for field in required_fields
+            })
+
+        evidence_ids = {
+            record["paper_id"]
+            for record in valid_evidence
+            if record.get("paper_id")
+        }
+        hypothesis_evidence_traceability = []
+        traceability_counts = {
+            "matched": 0,
+            "missing_reference": 0,
+            "unmatched_reference": 0,
+        }
+
+        for item in hypotheses:
+            if not isinstance(item, dict):
+                continue
+
+            reference = item.get("supporting_paper_id")
+            if reference is None or not str(reference).strip():
+                normalized_reference = None
+                status = "missing_reference"
+            else:
+                normalized_reference = str(reference).strip()
+                status = (
+                    "matched"
+                    if normalized_reference in evidence_ids
+                    else "unmatched_reference"
+                )
+
+            traceability_counts[status] += 1
+            hypothesis_evidence_traceability.append({
+                "hypothesis": item.get("hypothesis"),
+                "supporting_paper_id": normalized_reference,
+                "status": status,
             })
 
         received_count = len(evidence)
@@ -177,6 +222,9 @@ class ScientificExperimentBuilder:
             "evidence_records_considered": valid_count,
             "evidence_records_rejected": received_count - valid_count,
             "evidence_coverage_percent": coverage,
+            "evidence_records": valid_evidence,
+            "hypothesis_evidence_traceability": hypothesis_evidence_traceability,
+            "hypothesis_evidence_traceability_counts": traceability_counts,
             "comparison_status": comparison_status,
             "valid_dataset_rows": len(valid_rows),
             "mae": mae,
@@ -219,6 +267,9 @@ class ScientificExperimentBuilder:
             "evidence_records_considered": valid_count,
             "evidence_records_rejected": received_count - valid_count,
             "evidence_coverage_percent": coverage,
+            "evidence_records": valid_evidence,
+            "hypothesis_evidence_traceability": hypothesis_evidence_traceability,
+            "hypothesis_evidence_traceability_counts": traceability_counts,
             "comparison_status": comparison_status,
             "valid_dataset_rows": len(valid_rows),
             "mae": mae,

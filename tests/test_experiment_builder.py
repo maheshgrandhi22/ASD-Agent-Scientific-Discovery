@@ -155,5 +155,118 @@ class TestScientificExperimentBuilder(unittest.TestCase):
             self.builder.build(self.question, hypotheses="not a list")
 
 
+    def test_hypothesis_evidence_reference_is_matched(self):
+        hypotheses = [{
+            "hypothesis": "AI may improve candidate prioritization",
+            "supporting_paper_id": "PMID-123",
+        }]
+        evidence = [{
+            "title": "AI drug discovery study",
+            "abstract": (
+                "This abstract contains enough substantive text "
+                "to pass the evidence quality threshold."
+            ),
+            "source": "PubMed",
+            "paper_id": "PMID-123",
+            "url": "https://example.org/paper/123",
+        }]
+
+        result = self.builder.build(
+            self.question, hypotheses, evidence
+        )
+
+        self.assertEqual(
+            result["hypothesis_evidence_traceability"][0]["status"],
+            "matched",
+        )
+        self.assertEqual(
+            result["hypothesis_evidence_traceability_counts"]["matched"],
+            1,
+        )
+        self.assertEqual(
+            result["evidence_records"][0]["paper_id"], "PMID-123"
+        )
+        self.assertEqual(
+            result["evidence_records"][0]["url"],
+            "https://example.org/paper/123",
+        )
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exec(result["code"], {})
+        report = json.loads(output.getvalue())
+
+        self.assertEqual(
+            report["hypothesis_evidence_traceability"][0]["status"],
+            "matched",
+        )
+        self.assertEqual(
+            report["evidence_records"][0]["url"],
+            "https://example.org/paper/123",
+        )
+
+    def test_hypothesis_evidence_reference_is_unmatched(self):
+        hypotheses = [{
+            "hypothesis": "AI may improve candidate prioritization",
+            "supporting_paper_id": "PMID-NOT-FOUND",
+        }]
+        evidence = [{
+            "title": "AI drug discovery study",
+            "abstract": (
+                "This abstract contains enough substantive text "
+                "to pass the evidence quality threshold."
+            ),
+            "paper_id": "PMID-123",
+        }]
+
+        result = self.builder.build(
+            self.question, hypotheses, evidence
+        )
+
+        self.assertEqual(
+            result["hypothesis_evidence_traceability"][0]["status"],
+            "unmatched_reference",
+        )
+        self.assertEqual(
+            result["hypothesis_evidence_traceability_counts"][
+                "unmatched_reference"
+            ],
+            1,
+        )
+
+    def test_hypothesis_evidence_reference_is_missing(self):
+        hypotheses = [{
+            "hypothesis": "AI may improve candidate prioritization",
+        }]
+        evidence = [{
+            "title": "AI drug discovery study",
+            "abstract": (
+                "This abstract contains enough substantive text "
+                "to pass the evidence quality threshold."
+            ),
+            "paper_id": "PMID-123",
+        }]
+
+        result = self.builder.build(
+            self.question, hypotheses, evidence
+        )
+
+        self.assertIsNone(
+            result["hypothesis_evidence_traceability"][0][
+                "supporting_paper_id"
+            ]
+        )
+        self.assertEqual(
+            result["hypothesis_evidence_traceability"][0]["status"],
+            "missing_reference",
+        )
+        self.assertEqual(
+            result["hypothesis_evidence_traceability_counts"][
+                "missing_reference"
+            ],
+            1,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
