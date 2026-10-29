@@ -17,6 +17,7 @@ from src.agent.agent_roles import (
 from src.agent.vector_store import ScientificVectorStore
 from src.agent.experiment_feedback_loop import ExperimentFeedbackLoop
 from src.agent.experiment_builder import ScientificExperimentBuilder
+from src.agent.docker_sandbox import DockerSandbox
 
 
 class ScientificDiscoveryAgent:
@@ -321,5 +322,6 @@ class ScientificDiscoveryAgent:
 
 
 if __name__ == "__main__":
-    agent = ScientificDiscoveryAgent()
+    sandbox = DockerSandbox()
+    agent = ScientificDiscoveryAgent(sandbox=sandbox)
     agent.run("How can AI accelerate scientific discovery?")
