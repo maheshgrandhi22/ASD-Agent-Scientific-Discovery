@@ -1,5 +1,6 @@
 
 import requests
+from pathlib import Path
 
 from input_validator import validate_research_question
 from src.agent.research_planner import ResearchPlanner
@@ -18,6 +19,7 @@ from src.agent.vector_store import ScientificVectorStore
 from src.agent.experiment_feedback_loop import ExperimentFeedbackLoop
 from src.agent.experiment_builder import ScientificExperimentBuilder
 from src.agent.docker_sandbox import DockerSandbox
+from src.agent.multimodal_ingestion import MultimodalPDFIngestor
 
 
 class ScientificDiscoveryAgent:
@@ -25,7 +27,7 @@ class ScientificDiscoveryAgent:
 
     def __init__(
         self, vector_store=None, sandbox=None, code_reviser=None,
-        experiment_builder=None,
+        experiment_builder=None, pdf_ingestor=None,
     ):
         self.name = "Autonomous Scientific Discovery Agent"
         self.planner = ResearchPlanner()
@@ -57,14 +59,45 @@ class ScientificDiscoveryAgent:
 
         # Allow injection of a persistent store for testing or reuse.
         self.vector_store = vector_store
+        self.pdf_ingestor = pdf_ingestor or MultimodalPDFIngestor()
 
-    def run(self, research_question):
+    def run(self, research_question, pdf_paths=None):
         """Run the scientific discovery workflow."""
         valid, message = validate_research_question(research_question)
 
         if not valid:
             print(f"Invalid research question: {message}")
             return False
+
+        # Extract optional PDF material while preserving source page references.
+        pdf_documents = []
+
+        if pdf_paths is not None:
+            if isinstance(pdf_paths, (str, Path)):
+                pdf_paths = [pdf_paths]
+
+            if not isinstance(pdf_paths, (list, tuple)):
+                raise ValueError("PDF paths must be a path or a list of paths.")
+
+            print("\n=== Multimodal PDF Ingestion ===")
+
+            for pdf_path in pdf_paths:
+                try:
+                    extracted = self.pdf_ingestor.extract(pdf_path)
+                    pdf_documents.append(extracted)
+
+                    print(
+                        f"Extracted {extracted['total_pages']} pages and "
+                        f"{extracted['total_figures']} figures from "
+                        f"{extracted['source_pdf']}"
+                    )
+                except Exception as error:
+                    pdf_documents.append({
+                        "source_pdf": str(pdf_path),
+                        "status": "failed",
+                        "error": f"{type(error).__name__}: {error}",
+                    })
+                    print(f"PDF ingestion failed for {pdf_path}: {error}")
 
         plan = self.planner.create_plan(research_question)
 
@@ -290,6 +323,29 @@ class ScientificDiscoveryAgent:
 
             export_data = {
                 "research_question": research_question,
+                "pdf_ingestion": {
+                    "status": (
+                        "not_requested"
+                        if not pdf_documents
+                        else (
+                            "failed"
+                            if all(
+                                document.get("status") == "failed"
+                                for document in pdf_documents
+                            )
+                            else (
+                                "partial"
+                                if any(
+                                    document.get("status") == "failed"
+                                    for document in pdf_documents
+                                )
+                                else "completed"
+                            )
+                        )
+                    ),
+                    "documents": pdf_documents,
+                    "used_as_hypothesis_evidence": False,
+                },
                 "research_plan": plan,
                 "literature_review": literature_review,
                 "analyzed_papers": analyzed,
