@@ -300,5 +300,120 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         )
         self.assertIn("Vector store unavailable", output.getvalue())
 
+
+    @patch("src.agent.discovery_agent.ResultExporter.export_json")
+    @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
+    def test_pdf_ingestion_is_included_in_export(
+        self, mock_plan, mock_search, mock_export
+    ):
+        mock_plan.return_value = self.plan
+        mock_search.return_value = [self.paper]
+        mock_export.return_value = "research_results.json"
+
+        mock_store = Mock()
+        mock_store.add_papers.return_value = 1
+        mock_store.search.return_value = [self.paper]
+
+        ingestor = Mock()
+        ingestor.extract.side_effect = [
+            {
+                "source_pdf": "paper_one.pdf",
+                "total_pages": 3,
+                "total_figures": 1,
+                "pages": [],
+                "figures": [],
+            },
+            {
+                "source_pdf": "paper_two.pdf",
+                "total_pages": 5,
+                "total_figures": 2,
+                "pages": [],
+                "figures": [],
+            },
+        ]
+
+        agent = ScientificDiscoveryAgent(
+            vector_store=mock_store,
+            pdf_ingestor=ingestor,
+        )
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = agent.run(
+                self.question,
+                pdf_paths=["paper_one.pdf", "paper_two.pdf"],
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(ingestor.extract.call_count, 2)
+
+        exported_data = mock_export.call_args.args[0]
+        pdf_data = exported_data["pdf_ingestion"]
+
+        self.assertEqual(pdf_data["status"], "completed")
+        self.assertEqual(len(pdf_data["documents"]), 2)
+        self.assertEqual(
+            pdf_data["documents"][0]["source_pdf"],
+            "paper_one.pdf",
+        )
+        self.assertEqual(
+            pdf_data["documents"][1]["total_figures"],
+            2,
+        )
+        self.assertFalse(pdf_data["used_as_hypothesis_evidence"])
+
+    @patch("src.agent.discovery_agent.ResultExporter.export_json")
+    @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
+    def test_pdf_ingestion_failure_is_recorded_without_crashing(
+        self, mock_plan, mock_search, mock_export
+    ):
+        mock_plan.return_value = self.plan
+        mock_search.return_value = [self.paper]
+        mock_export.return_value = "research_results.json"
+
+        mock_store = Mock()
+        mock_store.add_papers.return_value = 1
+        mock_store.search.return_value = [self.paper]
+
+        ingestor = Mock()
+        ingestor.extract.side_effect = FileNotFoundError(
+            "PDF file not found"
+        )
+
+        agent = ScientificDiscoveryAgent(
+            vector_store=mock_store,
+            pdf_ingestor=ingestor,
+        )
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = agent.run(
+                self.question,
+                pdf_paths=["missing_paper.pdf"],
+            )
+
+        self.assertTrue(result)
+        mock_export.assert_called_once()
+
+        exported_data = mock_export.call_args.args[0]
+        pdf_data = exported_data["pdf_ingestion"]
+
+        self.assertEqual(pdf_data["status"], "failed")
+        self.assertEqual(len(pdf_data["documents"]), 1)
+        self.assertEqual(
+            pdf_data["documents"][0]["status"],
+            "failed",
+        )
+        self.assertIn(
+            "FileNotFoundError",
+            pdf_data["documents"][0]["error"],
+        )
+        self.assertIn(
+            "PDF ingestion failed",
+            output.getvalue(),
+        )
+
 if __name__ == "__main__":
     unittest.main()
