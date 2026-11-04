@@ -28,6 +28,7 @@ class ScientificDiscoveryAgent:
     def __init__(
         self, vector_store=None, sandbox=None, code_reviser=None,
         experiment_builder=None, pdf_ingestor=None,
+        gemini_client=None,
     ):
         self.name = "Autonomous Scientific Discovery Agent"
         self.planner = ResearchPlanner()
@@ -42,7 +43,7 @@ class ScientificDiscoveryAgent:
             retriever=self.multi_source_retriever,
             analyzer=self.findings_analyzer,
         )
-        self.hypothesis_generator = HypothesisGenerator()
+        self.hypothesis_generator = HypothesisGenerator(gemini_client=gemini_client)
         self.experiment_builder = (
             experiment_builder or ScientificExperimentBuilder()
         )

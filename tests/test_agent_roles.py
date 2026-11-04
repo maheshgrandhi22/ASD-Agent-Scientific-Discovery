@@ -273,6 +273,74 @@ class TestHypothesisGenerator(unittest.TestCase):
             )
 
 
+    def test_gemini_refines_hypothesis_and_preserves_evidence(self):
+        class FakeGemini:
+            def generate_text(self, prompt):
+                assert "AI in discovery" in prompt
+                return "AI-assisted screening may improve discovery efficiency."
+
+        review = {
+            "evidence": [{
+                "paper_id": "PMID:123",
+                "title": "AI in discovery",
+                "source": "PubMed",
+                "url": "https://pubmed.ncbi.nlm.nih.gov/123/",
+                "key_findings": ["AI may improve screening."],
+            }]
+        }
+
+        result = HypothesisGenerator(
+            gemini_client=FakeGemini()
+        ).generate("AI in discovery", review)
+
+        hypothesis = result["hypotheses"][0]
+        self.assertEqual(
+            hypothesis["hypothesis"],
+            "AI-assisted screening may improve discovery efficiency.",
+        )
+        self.assertEqual(hypothesis["supporting_paper_id"], "PMID:123")
+        self.assertEqual(hypothesis["source"], "PubMed")
+        self.assertEqual(
+            hypothesis["validation_status"],
+            "not experimentally validated",
+        )
+        self.assertEqual(hypothesis["generation_method"], "gemini")
+        self.assertEqual(result["gemini_assistance"]["used_count"], 1)
+
+    def test_gemini_failure_uses_deterministic_fallback(self):
+        class FailingGemini:
+            def generate_text(self, prompt):
+                raise RuntimeError("Simulated Gemini failure")
+
+        result = HypothesisGenerator(
+            gemini_client=FailingGemini()
+        ).generate(
+            "AI in discovery",
+            {"evidence": [{
+                "paper_id": "PMID:123",
+                "key_findings": ["AI may improve screening."],
+            }]},
+        )
+
+        hypothesis = result["hypotheses"][0]
+        self.assertIn("AI may improve screening.", hypothesis["hypothesis"])
+        self.assertEqual(hypothesis["generation_method"], "deterministic")
+        self.assertEqual(result["gemini_assistance"]["fallback_count"], 1)
+        self.assertEqual(result["gemini_assistance"]["status"], "fallback")
+
+    def test_gemini_is_not_called_without_evidence(self):
+        class FakeGemini:
+            def generate_text(self, prompt):
+                raise AssertionError("Gemini should not be called.")
+
+        result = HypothesisGenerator(
+            gemini_client=FakeGemini()
+        ).generate("AI in discovery", {"evidence": []})
+
+        self.assertEqual(result["hypotheses"], [])
+        self.assertEqual(result["gemini_assistance"]["used_count"], 0)
+
+
 class TestCodeExecutor(unittest.TestCase):
     def test_execution_is_blocked_without_sandbox(self):
         result = CodeExecutor().execute("print('hello')")

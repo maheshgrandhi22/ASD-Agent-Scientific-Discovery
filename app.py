@@ -1,4 +1,5 @@
 ﻿import contextlib
+import os
 import io
 import json
 import tempfile
@@ -7,6 +8,7 @@ from pathlib import Path
 import streamlit as st
 
 from src.agent.discovery_agent import ScientificDiscoveryAgent
+from src.agent.gemini_client import GeminiClient
 from src.agent.docker_sandbox import DockerSandbox
 
 
@@ -133,7 +135,15 @@ if submitted:
                         pdf_paths.append(temporary_pdf)
 
                     sandbox = DockerSandbox()
-                    agent = ScientificDiscoveryAgent(sandbox=sandbox)
+                    gemini_client = (
+                        GeminiClient()
+                        if os.getenv('GEMINI_API_KEY')
+                        else None
+                    )
+                    agent = ScientificDiscoveryAgent(
+                        sandbox=sandbox,
+                        gemini_client=gemini_client,
+                    )
 
                     with contextlib.redirect_stdout(output_buffer):
                         agent_ok = agent.run(

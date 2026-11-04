@@ -415,5 +415,20 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
             output.getvalue(),
         )
 
+class TestGeminiDependencyInjection(unittest.TestCase):
+    def test_gemini_client_is_injected_into_hypothesis_generator(self):
+        class FakeGemini:
+            def generate_text(self, prompt):
+                return "Refined candidate hypothesis."
+
+        client = FakeGemini()
+        agent = ScientificDiscoveryAgent(gemini_client=client)
+
+        self.assertIs(
+            agent.hypothesis_generator.gemini_client,
+            client,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
