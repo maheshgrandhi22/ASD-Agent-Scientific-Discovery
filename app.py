@@ -9,6 +9,7 @@ import streamlit as st
 
 from src.agent.discovery_agent import ScientificDiscoveryAgent
 from src.agent.gemini_client import GeminiClient
+from src.agent.gemini_code_reviser import GeminiCodeReviser
 from src.agent.docker_sandbox import DockerSandbox
 
 
@@ -140,9 +141,15 @@ if submitted:
                         if os.getenv('GEMINI_API_KEY')
                         else None
                     )
+                    code_reviser = (
+                        GeminiCodeReviser(gemini_client)
+                        if gemini_client is not None
+                        else None
+                    )
                     agent = ScientificDiscoveryAgent(
                         sandbox=sandbox,
                         gemini_client=gemini_client,
+                        code_reviser=code_reviser,
                     )
 
                     with contextlib.redirect_stdout(output_buffer):
