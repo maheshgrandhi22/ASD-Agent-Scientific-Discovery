@@ -1,4 +1,5 @@
-﻿import contextlib
+import contextlib
+import csv
 import os
 import io
 import json
@@ -75,6 +76,51 @@ def show_value(value):
         st.write(value)
 
 
+def parse_dataset_csv(uploaded_file):
+    """Read paired prediction measurements from a bounded CSV upload."""
+    if uploaded_file is None:
+        return None
+
+    content = uploaded_file.getvalue()
+    if len(content) > 5 * 1024 * 1024:
+        raise ValueError("The evaluation CSV must be 5 MB or smaller.")
+
+    try:
+        decoded = content.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise ValueError("The CSV must use UTF-8 encoding.") from error
+
+    reader = csv.DictReader(io.StringIO(decoded))
+    required = {
+        "observed",
+        "baseline_prediction",
+        "candidate_prediction",
+    }
+    headers = set(reader.fieldnames or [])
+    missing = required - headers
+    if missing:
+        raise ValueError(
+            "CSV is missing required columns: " + ", ".join(sorted(missing))
+        )
+
+    rows = []
+    for row in reader:
+        if len(rows) >= 10000:
+            raise ValueError("The evaluation CSV may contain at most 10,000 rows.")
+        parsed = {}
+        for column in required:
+            raw_value = row.get(column)
+            try:
+                parsed[column] = float(raw_value)
+            except (TypeError, ValueError):
+                parsed[column] = None
+        rows.append(parsed)
+
+    if not rows:
+        raise ValueError("The evaluation CSV contains no data rows.")
+    return rows
+
+
 with st.container(border=True):
     st.subheader("Start a discovery run")
     with st.form("research_form"):
@@ -91,10 +137,18 @@ with st.container(border=True):
             accept_multiple_files=True,
             help="Upload one or more PDFs for text, page and embedded-figure extraction.",
         )
+        dataset_upload = st.file_uploader(
+            "Optional paired evaluation dataset (CSV)",
+            type=["csv"],
+            help=(
+                "Required columns: observed, baseline_prediction, "
+                "candidate_prediction. Use matched rows from the same observations."
+            ),
+        )
         submitted = st.form_submit_button(
             "Run scientific discovery",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
 
 if submitted:
@@ -105,6 +159,12 @@ if submitted:
     elif len(cleaned_question) > 500:
         st.error("Please keep the question within 500 characters.")
     else:
+        try:
+            dataset_rows = parse_dataset_csv(dataset_upload)
+        except ValueError as error:
+            st.error(str(error))
+            st.stop()
+
         previous_mtime = (
             RESULTS_FILE.stat().st_mtime_ns
             if RESULTS_FILE.exists()
@@ -156,6 +216,7 @@ if submitted:
                         agent_ok = agent.run(
                             cleaned_question,
                             pdf_paths=pdf_paths or None,
+                            dataset=dataset_rows,
                         )
 
         except Exception as exc:
@@ -356,6 +417,111 @@ else:
             with st.expander("Full execution details"):
                 st.json(execution)
 
+            st.divider()
+            st.subheader("Statistical Critic")
+
+            critic = results.get("statistical_critic") or {}
+            critic_status = critic.get("status", "not_available")
+
+            st.write(
+                "**Evaluation status:** "
+                + str(critic_status).replace("_", " ").title()
+            )
+
+            st.caption(
+                "The critic compares paired absolute prediction errors. "
+                "Statistical significance is not proof of a scientific hypothesis."
+            )
+
+            if critic.get("sample_size", 0):
+                c1, c2, c3 = st.columns(3)
+                c1.metric(
+                    "Valid paired observations",
+                    critic.get("sample_size")
+                )
+                c2.metric(
+                    "Baseline MAE",
+                    f"{critic.get('baseline_mae'):.4f}"
+                    if critic.get("baseline_mae") is not None
+                    else "N/A"
+                )
+                c3.metric(
+                    "Candidate MAE",
+                    f"{critic.get('candidate_mae'):.4f}"
+                    if critic.get("candidate_mae") is not None
+                    else "N/A"
+                )
+
+            if critic.get("small_sample_warning"):
+                st.warning(
+                    "Small-sample caution: fewer than 30 valid paired "
+                    "observations are available. Statistical power may be "
+                    "limited. The 30-observation threshold is a caution "
+                    "heuristic, not a universal validity rule."
+                )
+
+            if critic.get("p_value") is not None:
+                st.write(f"**Paired t-test p-value:** {critic['p_value']:.6g}")
+
+            interval = critic.get("confidence_interval")
+            if interval is not None:
+                confidence = critic.get("confidence_level_percent", 95)
+                st.write(
+                    f"**{confidence:g}% confidence interval for mean improvement:** "
+                    f"[{interval[0]:.6g}, {interval[1]:.6g}]"
+                )
+
+            if critic.get("interpretation"):
+                st.write(critic["interpretation"])
+
+            st.divider()
+            st.markdown("**Normality diagnostic — Shapiro–Wilk**")
+
+            normality = critic.get("normality_diagnostic") or {}
+            normality_status = normality.get("status", "not_available")
+
+            st.write(
+                "**Diagnostic status:** "
+                + str(normality_status).replace("_", " ").title()
+            )
+
+            if normality.get("statistic") is not None:
+                st.write(
+                    f"**Shapiro–Wilk statistic:** "
+                    f"{normality['statistic']:.6g}"
+                )
+
+            if normality.get("p_value") is not None:
+                st.write(
+                    f"**Shapiro–Wilk p-value:** "
+                    f"{normality['p_value']:.6g}"
+                )
+
+            if normality.get("interpretation"):
+                if normality_status == "evidence_against_normality":
+                    st.warning(normality["interpretation"])
+                elif normality_status == (
+                    "no_significant_evidence_against_normality"
+                ):
+                    st.info(normality["interpretation"])
+                else:
+                    st.caption(normality["interpretation"])
+
+            if critic.get("reason"):
+                st.info(critic["reason"])
+
+            if critic.get("assumptions"):
+                with st.expander("Statistical test assumptions"):
+                    for assumption in critic["assumptions"]:
+                        st.write("- " + assumption)
+
+            if critic.get("limitations"):
+                with st.expander("Statistical limitations"):
+                    for limitation in critic["limitations"]:
+                        st.write("- " + limitation)
+
+            with st.expander("Full statistical critic report"):
+                st.json(critic)
         with pdf_tab:
             st.subheader("Multimodal PDF ingestion")
 
@@ -438,7 +604,7 @@ else:
                                     f"Page {figure.get('page_number', '?')} "
                                     f"? Image {figure.get('image_index', figure_index)}"
                                 ),
-                                use_container_width=True,
+                                width="stretch",
                             )
 
         with raw_tab:

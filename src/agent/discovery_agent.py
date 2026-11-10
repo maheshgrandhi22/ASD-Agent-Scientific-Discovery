@@ -18,6 +18,7 @@ from src.agent.agent_roles import (
 from src.agent.vector_store import ScientificVectorStore
 from src.agent.experiment_feedback_loop import ExperimentFeedbackLoop
 from src.agent.experiment_builder import ScientificExperimentBuilder
+from src.agent.statistical_critic import StatisticalCritic
 from src.agent.docker_sandbox import DockerSandbox
 from src.agent.multimodal_ingestion import MultimodalPDFIngestor
 
@@ -28,7 +29,7 @@ class ScientificDiscoveryAgent:
     def __init__(
         self, vector_store=None, sandbox=None, code_reviser=None,
         experiment_builder=None, pdf_ingestor=None,
-        gemini_client=None,
+        gemini_client=None, statistical_critic=None,
     ):
         self.name = "Autonomous Scientific Discovery Agent"
         self.planner = ResearchPlanner()
@@ -57,12 +58,17 @@ class ScientificDiscoveryAgent:
             else None
         )
         self.result_exporter = ResultExporter()
+        self.statistical_critic = (
+            statistical_critic
+            if statistical_critic is not None
+            else StatisticalCritic()
+        )
 
         # Allow injection of a persistent store for testing or reuse.
         self.vector_store = vector_store
         self.pdf_ingestor = pdf_ingestor or MultimodalPDFIngestor()
 
-    def run(self, research_question, pdf_paths=None):
+    def run(self, research_question, pdf_paths=None, dataset=None):
         """Run the scientific discovery workflow."""
         valid, message = validate_research_question(research_question)
 
@@ -275,6 +281,7 @@ class ScientificDiscoveryAgent:
                 research_question,
                 hypotheses=hypotheses,
                 evidence=literature_review.get("evidence", []),
+                dataset=dataset,
             )
             experiment_code = experiment_specification["code"]
 
@@ -289,6 +296,28 @@ class ScientificDiscoveryAgent:
                     experiment_code,
                     timeout_seconds=10,
                 )
+
+            # Statistical evaluation is performed only after successful execution.
+            if execution_status.get("status") == "success":
+                statistical_critic_result = self.statistical_critic.evaluate(
+                    dataset if dataset is not None else []
+                )
+            else:
+                statistical_critic_result = {
+                    "critic": "StatisticalCritic",
+                    "status": "skipped_execution_not_successful",
+                    "sample_size": 0,
+                    "p_value": None,
+                    "confidence_interval": None,
+                    "reason": (
+                        "Statistical evaluation requires successful "
+                        "experiment execution."
+                    ),
+                }
+
+            print("\n=== Statistical Critic ===")
+            print(f"Statistical evaluation status: {statistical_critic_result['status']}")
+            print(statistical_critic_result.get("interpretation", "No statistical interpretation available."))
 
             print("\n=== Code Executor ===")
             print(f"Execution status: {execution_status['status']}")
@@ -354,6 +383,7 @@ class ScientificDiscoveryAgent:
                 "hypothesis_generation": hypothesis_result,
                 "experiment_specification": experiment_specification,
                 "code_execution": execution_status,
+                "statistical_critic": statistical_critic_result,
                 "retrieved_evidence": retrieved_evidence,
                 "evidence_retrieval": evidence_retrieval,
             }
