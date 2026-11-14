@@ -475,6 +475,51 @@ else:
                 st.write(critic["interpretation"])
 
             st.divider()
+            wilcoxon = critic.get("wilcoxon_test") or {}
+            st.divider()
+            st.markdown("**Wilcoxon signed-rank test**")
+
+            wilcoxon_status = wilcoxon.get("status", "not_available")
+            wilcoxon_interpretation = wilcoxon.get(
+                "interpretation",
+                "Wilcoxon test interpretation is not available."
+            )
+
+            if wilcoxon_status == "significant":
+                st.success(wilcoxon_interpretation)
+            elif wilcoxon_status == "calculation_failed":
+                st.warning(wilcoxon_interpretation)
+            else:
+                st.info(wilcoxon_interpretation)
+
+            wilcoxon_col1, wilcoxon_col2 = st.columns(2)
+
+            wilcoxon_statistic = wilcoxon.get("statistic")
+            wilcoxon_p_value = wilcoxon.get("p_value")
+
+            with wilcoxon_col1:
+                st.metric(
+                    "Wilcoxon statistic",
+                    f"{wilcoxon_statistic:.4f}"
+                    if wilcoxon_statistic is not None else "N/A"
+                )
+
+            with wilcoxon_col2:
+                st.metric(
+                    "Wilcoxon p-value",
+                    f"{wilcoxon_p_value:.6g}"
+                    if wilcoxon_p_value is not None else "N/A"
+                )
+
+            st.write(
+                "Nonzero paired differences:",
+                wilcoxon.get("nonzero_pairs", 0)
+            )
+            st.write(
+                "Zero differences:",
+                wilcoxon.get("zero_differences", 0)
+            )
+
             st.markdown("**Normality diagnostic — Shapiro–Wilk**")
 
             normality = critic.get("normality_diagnostic") or {}
