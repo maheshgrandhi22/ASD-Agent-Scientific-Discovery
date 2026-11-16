@@ -116,5 +116,85 @@ class TestMultimodalPDFIngestor(unittest.TestCase):
             self.ingestor.extract(invalid_path)
 
 
+    def test_without_gemini_marks_analysis_not_configured(self):
+        result = self.ingestor.extract(self.pdf_path)
+
+        figures = [
+            figure for figure in result["figures"]
+            if "image_path" in figure
+        ]
+
+        self.assertTrue(figures)
+        self.assertEqual(
+            figures[0]["image_analysis"]["status"],
+            "not_configured",
+        )
+
+    def test_gemini_interprets_extracted_figure(self):
+        from unittest.mock import Mock
+
+        gemini = Mock()
+        gemini.analyze_image.return_value = (
+            "The figure appears to show an increasing trend."
+        )
+
+        ingestor = MultimodalPDFIngestor(
+            image_directory=self.image_dir,
+            gemini_client=gemini,
+        )
+
+        result = ingestor.extract(self.pdf_path)
+
+        figures = [
+            figure for figure in result["figures"]
+            if "image_path" in figure
+        ]
+
+        self.assertTrue(figures)
+        analysis = figures[0]["image_analysis"]
+
+        self.assertEqual(analysis["status"], "completed")
+        self.assertEqual(
+            analysis["interpretation"],
+            "The figure appears to show an increasing trend.",
+        )
+        self.assertEqual(
+            analysis["scientific_validation"],
+            "not_independently_verified",
+        )
+        gemini.analyze_image.assert_called_once()
+
+    def test_gemini_failure_does_not_stop_pdf_extraction(self):
+        from unittest.mock import Mock
+
+        gemini = Mock()
+        gemini.analyze_image.side_effect = RuntimeError(
+            "Gemini unavailable"
+        )
+
+        ingestor = MultimodalPDFIngestor(
+            image_directory=self.image_dir,
+            gemini_client=gemini,
+        )
+
+        result = ingestor.extract(self.pdf_path)
+
+        self.assertEqual(result["total_pages"], 2)
+
+        figures = [
+            figure for figure in result["figures"]
+            if "image_path" in figure
+        ]
+
+        self.assertTrue(figures)
+        self.assertEqual(
+            figures[0]["image_analysis"]["status"],
+            "failed",
+        )
+        self.assertIn(
+            "Gemini unavailable",
+            figures[0]["image_analysis"]["error"],
+        )
+
 if __name__ == "__main__":
     unittest.main()

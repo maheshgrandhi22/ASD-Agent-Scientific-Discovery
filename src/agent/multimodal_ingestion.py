@@ -6,13 +6,62 @@ import pymupdf
 
 
 class MultimodalPDFIngestor:
-    """Extract text and embedded figures from scientific PDF documents."""
+    """Extract PDF text and figures, with optional Gemini image analysis."""
 
-    def __init__(self, image_directory="data/extracted_images"):
+    def __init__(
+        self,
+        image_directory="data/extracted_images",
+        gemini_client=None,
+    ):
         self.image_directory = Path(image_directory)
+        self.gemini_client = gemini_client
+
+    def _analyze_figure(self, image_path):
+        """Return a clearly labelled, unverified AI interpretation."""
+        if self.gemini_client is None:
+            return {
+                "status": "not_configured",
+                "interpretation": None,
+                "scientific_validation": "not_performed",
+            }
+
+        prompt = (
+            "You are analyzing an extracted figure from a scientific paper. "
+            "Describe only what is visibly supported by the image. "
+            "Identify the likely chart or figure type, visible axes and "
+            "units, legend or groups, observable trends, comparisons, "
+            "and any readable labels. State when information is unclear "
+            "or unavailable. Do not invent numerical values, infer "
+            "causation, or claim statistical significance unless it is "
+            "explicitly visible in the figure. Distinguish observations "
+            "from possible interpretations. Mention image-quality "
+            "limitations. This is an AI-generated description, not "
+            "independent scientific validation."
+        )
+
+        try:
+            interpretation = self.gemini_client.analyze_image(
+                image_path,
+                prompt,
+            )
+
+            return {
+                "status": "completed",
+                "interpretation": interpretation,
+                "generated_by": "Gemini",
+                "scientific_validation": "not_independently_verified",
+            }
+
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "interpretation": None,
+                "error": f"{type(exc).__name__}: {exc}",
+                "scientific_validation": "not_performed",
+            }
 
     def extract(self, pdf_path):
-        """Extract page text, figures, and figure-caption references."""
+        """Extract page text, figures, captions, and optional interpretations."""
         pdf_path = Path(pdf_path)
 
         if not pdf_path.exists():
@@ -55,27 +104,31 @@ class MultimodalPDFIngestor:
 
                         digest = hashlib.sha256(
                             image_bytes
-                        ).hexdigest()[:16]
+                        ).hexdigest()
 
                         filename = (
                             f"{pdf_path.stem}_page_{page_number}_"
-                            f"image_{image_index}_{digest}.{extension}"
+                            f"image_{image_index}_{digest[:16]}.{extension}"
                         )
 
                         image_path = self.image_directory / filename
                         image_path.write_bytes(image_bytes)
 
-                        figures.append({
+                        figure = {
                             "page_number": page_number,
                             "image_index": image_index,
                             "image_path": str(image_path),
                             "width": extracted.get("width"),
                             "height": extracted.get("height"),
                             "extension": extension,
-                            "sha256": hashlib.sha256(
-                                image_bytes
-                            ).hexdigest(),
-                        })
+                            "sha256": digest,
+                        }
+
+                        figure["image_analysis"] = self._analyze_figure(
+                            image_path
+                        )
+
+                        figures.append(figure)
 
                     except Exception as exc:
                         figures.append({
