@@ -6,6 +6,8 @@ from contextlib import redirect_stdout
 from unittest.mock import Mock, patch
 
 from src.agent.discovery_agent import ScientificDiscoveryAgent
+from src.agent.publication_verifier import PublicationVerifier
+from src.agent.crossref_peer_review_provider import CrossrefPeerReviewProvider
 
 
 class TestScientificDiscoveryAgent(unittest.TestCase):
@@ -27,7 +29,49 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
             "published": "2026-01-01T00:00:00Z",
             "url": "https://arxiv.org/abs/1234.5678",
             "abstract": "AI methods for scientific research.",
+            "doi": "10.1234/ai.drug.discovery",
         }
+        self.verified_paper = {
+            **self.paper,
+            "peer_review_status": "verified",
+            "peer_reviewed_verified": True,
+            "verification_source": "Unit-test publication registry",
+            "verified_identifier": "10.1234/ai.drug.discovery",
+            "verified_publication_title": "AI for Drug Discovery",
+            "verified_publication_venue": "Journal of Test Science",
+            "verification_evidence_url": "https://registry.example.org/test-record",
+        }
+
+    def create_agent(self, **kwargs):
+        class TestPublicationProvider:
+            def verify_publication(self, paper):
+                return {
+                    "peer_reviewed": True,
+                    "matched_identifier": paper.get("doi", ""),
+                    "publication_title": paper.get("title", ""),
+                    "publication_venue": "Journal of Test Science",
+                    "evidence_url": "https://registry.example.org/test-record",
+                }
+
+        verifier = PublicationVerifier(
+            provider=TestPublicationProvider(),
+            provider_name="Unit-test publication registry",
+        )
+        return ScientificDiscoveryAgent(
+            publication_verifier=verifier,
+            **kwargs,
+        )
+
+    def test_crossref_provider_is_configured_by_default(self):
+        agent = ScientificDiscoveryAgent()
+        self.assertIsInstance(
+            agent.publication_verifier.provider,
+            CrossrefPeerReviewProvider,
+        )
+        self.assertEqual(
+            agent.publication_verifier.provider_name,
+            CrossrefPeerReviewProvider.PROVIDER_NAME,
+        )
 
     @patch("src.agent.discovery_agent.ResultExporter.export_json")
     @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
@@ -41,13 +85,33 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
 
         mock_store = Mock()
         mock_store.add_papers.return_value = 1
-        mock_store.search.return_value = [self.paper]
+        mock_store.search.return_value = [self.verified_paper]
 
-        agent = ScientificDiscoveryAgent(vector_store=mock_store)
+        agent = self.create_agent(vector_store=mock_store)
+        dataset = [
+            {
+                "observed": 100,
+                "baseline_prediction": 90,
+                "candidate_prediction": 95,
+                "data_split": "train",
+            },
+            {
+                "observed": 10,
+                "baseline_prediction": 8,
+                "candidate_prediction": 9,
+                "data_split": "holdout",
+            },
+            {
+                "observed": 20,
+                "baseline_prediction": 17,
+                "candidate_prediction": 19,
+                "data_split": "holdout",
+            },
+        ]
         output = io.StringIO()
 
         with redirect_stdout(output):
-            result = agent.run(self.question)
+            result = agent.run(self.question, dataset=dataset)
 
         self.assertTrue(result)
         mock_plan.assert_called_once_with(self.question)
@@ -68,6 +132,16 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
             "AI for Drug Discovery",
         )
         self.assertIn("research_summary", exported_data)
+        holdout = exported_data["holdout_evaluation"]
+        self.assertEqual(holdout["status"], "completed_small_sample")
+        self.assertEqual(holdout["train_sample_size"], 1)
+        self.assertEqual(holdout["holdout_sample_size"], 2)
+        self.assertAlmostEqual(
+            holdout["holdout_metrics"]["mae"]["baseline"], 2.5
+        )
+        self.assertAlmostEqual(
+            holdout["holdout_metrics"]["mae"]["candidate"], 1.0
+        )
         self.assertEqual(
             exported_data["evidence_retrieval"]["method"],
             "vector_store",
@@ -89,9 +163,89 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         )
         self.assertIn("Research workflow completed.", text)
 
+    @patch("src.agent.discovery_agent.ResultExporter.export_json")
+    @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
+    def test_unconfigured_verifier_fails_closed_and_skips_execution(
+        self, mock_plan, mock_search, mock_export
+    ):
+        mock_plan.return_value = self.plan
+        mock_search.return_value = [{
+            **self.paper,
+            "peer_reviewed_verified": True,
+            "peer_review_status": "verified",
+            "verification_source": "Untrusted upstream flag",
+        }]
+        mock_export.return_value = "research_results.json"
+        sandbox = Mock()
+
+        agent = ScientificDiscoveryAgent(
+            sandbox=sandbox,
+            publication_verifier=PublicationVerifier(),
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = agent.run(self.question)
+
+        self.assertTrue(result)
+        exported = mock_export.call_args.args[0]
+        self.assertEqual(
+            exported["publication_verification"]["status"],
+            "insufficient_verified_evidence",
+        )
+        self.assertEqual(exported["publication_verification"]["verified_count"], 0)
+        self.assertEqual(exported["hypothesis_generation"]["hypotheses"], [])
+        self.assertEqual(
+            exported["code_execution"]["status"],
+            "skipped_insufficient_verified_evidence",
+        )
+        sandbox.execute.assert_not_called()
+        self.assertIn(
+            "No papers met the configured Crossref peer-review evidence policy",
+            output.getvalue(),
+        )
+
+    @patch("src.agent.discovery_agent.ResultExporter.export_json")
+    @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
+    @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
+    def test_only_verified_papers_enter_vector_store_and_report(
+        self, mock_plan, mock_search, mock_export
+    ):
+        mock_plan.return_value = self.plan
+        unverified = {
+            "title": "Unverified article",
+            "abstract": "This record has no publication identifier.",
+            "source": "arXiv",
+            "url": "https://arxiv.org/abs/9999.00001",
+        }
+        mock_search.return_value = [self.paper, unverified]
+        mock_export.return_value = "research_results.json"
+
+        mock_store = Mock()
+        mock_store.add_papers.return_value = 1
+        mock_store.search.return_value = [self.verified_paper]
+
+        agent = self.create_agent(vector_store=mock_store)
+        with redirect_stdout(io.StringIO()):
+            agent.run(self.question)
+
+        stored = mock_store.add_papers.call_args.args[0]
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["title"], self.paper["title"])
+
+        exported = mock_export.call_args.args[0]
+        verification = exported["publication_verification"]
+        self.assertEqual(verification["retrieved_count"], 2)
+        self.assertEqual(verification["verified_count"], 1)
+        self.assertEqual(verification["rejected_count"], 1)
+        self.assertEqual(
+            verification["rejected_papers"][0]["reason"],
+            "missing_doi_or_pmid",
+        )
+
     @patch("src.agent.discovery_agent.LiteratureRetriever.search")
     def test_invalid_question_stops_workflow(self, mock_search):
-        agent = ScientificDiscoveryAgent()
+        agent = self.create_agent()
         output = io.StringIO()
 
         with redirect_stdout(output):
@@ -111,7 +265,7 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         mock_search.return_value = [self.paper]
         mock_export.side_effect = OSError("Disk is unavailable")
 
-        agent = ScientificDiscoveryAgent()
+        agent = self.create_agent()
         output = io.StringIO()
 
         with redirect_stdout(output):
@@ -125,21 +279,89 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
     @patch("src.agent.discovery_agent.ResultExporter.export_json")
     @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
     @patch("src.agent.discovery_agent.ResearchPlanner.create_plan")
-    def test_no_papers_skips_export(
+    def test_no_papers_exports_insufficient_evidence_report(
         self, mock_plan, mock_search, mock_export
     ):
         mock_plan.return_value = self.plan
         mock_search.return_value = []
+        mock_export.return_value = "research_results.json"
 
-        agent = ScientificDiscoveryAgent()
+        agent = self.create_agent()
+        dataset = [
+            {
+                "observed": 100,
+                "baseline_prediction": 90,
+                "candidate_prediction": 95,
+                "data_split": "train",
+            },
+            {
+                "observed": 10,
+                "baseline_prediction": 8,
+                "candidate_prediction": 9,
+                "data_split": "holdout",
+            },
+            {
+                "observed": 20,
+                "baseline_prediction": 17,
+                "candidate_prediction": 19,
+                "data_split": "holdout",
+            },
+        ]
         output = io.StringIO()
 
         with redirect_stdout(output):
-            result = agent.run(self.question)
+            result = agent.run(self.question, dataset=dataset)
 
         self.assertTrue(result)
         self.assertIn("No papers were found", output.getvalue())
-        mock_export.assert_not_called()
+        mock_export.assert_called_once()
+
+        exported = mock_export.call_args.args[0]
+        self.assertEqual(
+            exported["publication_verification"]["status"],
+            "no_papers_retrieved",
+        )
+        self.assertEqual(
+            exported["publication_verification"]["retrieved_count"], 0
+        )
+        self.assertEqual(exported["analyzed_papers"], [])
+        self.assertEqual(
+            exported["holdout_evaluation"]["status"],
+            "completed_small_sample",
+        )
+        self.assertEqual(
+            exported["holdout_evaluation"]["holdout_sample_size"], 2
+        )
+        self.assertEqual(exported["hypothesis_generation"]["hypotheses"], [])
+        self.assertEqual(
+            exported["hypothesis_generation"]["status"],
+            "skipped_insufficient_verified_evidence",
+        )
+        self.assertEqual(
+            exported["code_execution"]["status"],
+            "skipped_insufficient_verified_evidence",
+        )
+        critic = exported["statistical_critic"]
+        self.assertEqual(critic["sample_size"], 3)
+        self.assertAlmostEqual(critic["baseline_mae"], 5.0)
+        self.assertAlmostEqual(critic["candidate_mae"], 7 / 3)
+        self.assertEqual(
+            critic["evaluation_scope"],
+            "independent_paired_dataset",
+        )
+        self.assertEqual(
+            critic["scientific_validation"],
+            "not_established",
+        )
+        self.assertIn("does not validate literature evidence", critic["notice"])
+        self.assertNotEqual(
+            critic["status"],
+            "skipped_insufficient_verified_evidence",
+        )
+        self.assertIn(
+            "Insufficient-evidence report exported",
+            output.getvalue(),
+        )
         self.assertIn("Research workflow completed.", output.getvalue())
 
     @patch("src.agent.discovery_agent.MultiSourceLiteratureRetriever.search")
@@ -152,7 +374,7 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
             "Service temporarily unavailable"
         )
 
-        agent = ScientificDiscoveryAgent()
+        agent = self.create_agent()
         output = io.StringIO()
 
         with redirect_stdout(output):
@@ -181,7 +403,7 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
             "return_code": 0,
         }
 
-        agent = ScientificDiscoveryAgent(sandbox=sandbox)
+        agent = self.create_agent(sandbox=sandbox)
         output = io.StringIO()
 
         with redirect_stdout(output):
@@ -230,7 +452,7 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
         ]
 
         reviser = Mock(return_value="print('revised experiment')")
-        agent = ScientificDiscoveryAgent(
+        agent = self.create_agent(
             sandbox=sandbox,
             code_reviser=reviser,
         )
@@ -273,7 +495,7 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
             "vector search unavailable"
         )
 
-        agent = ScientificDiscoveryAgent(vector_store=mock_store)
+        agent = self.create_agent(vector_store=mock_store)
         output = io.StringIO()
 
         with redirect_stdout(output):
@@ -313,7 +535,7 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
 
         mock_store = Mock()
         mock_store.add_papers.return_value = 1
-        mock_store.search.return_value = [self.paper]
+        mock_store.search.return_value = [self.verified_paper]
 
         ingestor = Mock()
         ingestor.extract.side_effect = [
@@ -333,7 +555,7 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
             },
         ]
 
-        agent = ScientificDiscoveryAgent(
+        agent = self.create_agent(
             vector_store=mock_store,
             pdf_ingestor=ingestor,
         )
@@ -375,14 +597,14 @@ class TestScientificDiscoveryAgent(unittest.TestCase):
 
         mock_store = Mock()
         mock_store.add_papers.return_value = 1
-        mock_store.search.return_value = [self.paper]
+        mock_store.search.return_value = [self.verified_paper]
 
         ingestor = Mock()
         ingestor.extract.side_effect = FileNotFoundError(
             "PDF file not found"
         )
 
-        agent = ScientificDiscoveryAgent(
+        agent = self.create_agent(
             vector_store=mock_store,
             pdf_ingestor=ingestor,
         )

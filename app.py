@@ -1,4 +1,4 @@
-import contextlib
+﻿import contextlib
 import csv
 import os
 import io
@@ -12,51 +12,171 @@ from src.agent.discovery_agent import ScientificDiscoveryAgent
 from src.agent.gemini_client import GeminiClient
 from src.agent.gemini_code_reviser import GeminiCodeReviser
 from src.agent.docker_sandbox import DockerSandbox
+from src.agent.latex_report_generator import LatexReportGenerator
+from src.agent.research_session_memory import ResearchSessionMemory
+from src.agent.workflow_trace import build_workflow_trace
 
 
 ROOT = Path(__file__).resolve().parent
 RESULTS_FILE = ROOT / "research_results.json"
+SESSION_MEMORY = ResearchSessionMemory(ROOT / "data" / "research_sessions")
 
 st.set_page_config(
     page_title="Grand ASD-Agent",
-    page_icon="🔬",
+    page_icon="ðŸ”¬",
     layout="wide",
 )
 
 st.markdown(
     """
     <style>
-    .block-container {padding-top: 2rem; padding-bottom: 3rem;}
-    div[data-testid="stMetric"] {
-        border: 1px solid rgba(128,128,128,.25);
-        padding: 1rem; border-radius: 12px;
+    .block-container {
+        max-width: 1500px;
+        padding-top: 1.4rem;
+        padding-bottom: 3rem;
+    }
+    [data-testid="stAppViewContainer"] {
+        background:
+            radial-gradient(circle at 85% 0%, rgba(25, 112, 145, .10), transparent 28%),
+            var(--background-color);
+    }
+    [data-testid="stSidebar"] {
+        border-right: 1px solid rgba(128, 128, 128, .18);
+    }
+    [data-testid="stMetric"] {
+        background: var(--secondary-background-color);
+        border: 1px solid rgba(128, 128, 128, .22);
+        border-radius: 14px;
+        padding: 1rem 1.1rem;
+    }
+    [data-testid="stMetricLabel"] { font-size: .82rem; }
+    [data-testid="stMetricValue"] { font-weight: 700; }
+    div[data-testid="stTabs"] button { font-weight: 600; }
+    div.stButton > button,
+    div.stFormSubmitButton > button {
+        border-radius: 10px;
+        font-weight: 650;
+        min-height: 2.7rem;
+    }
+    [data-testid="stFileUploader"] { border-radius: 12px; }
+    .grand-hero {
+        padding: 1.8rem 2rem;
+        margin: .3rem 0 1.5rem 0;
+        border: 1px solid rgba(65, 160, 190, .28);
+        border-radius: 20px;
+        background: linear-gradient(115deg, #10304c, #105b70);
+        color: #f4fbff;
+        box-shadow: 0 12px 32px rgba(0, 25, 45, .13);
+    }
+    .grand-hero-kicker {
+        color: #a9e4ed;
+        font-size: .76rem;
+        font-weight: 750;
+        letter-spacing: .16em;
+        text-transform: uppercase;
+        margin-bottom: .55rem;
+    }
+    .grand-hero h1 {
+        color: #ffffff;
+        font-size: clamp(2rem, 4vw, 2.8rem);
+        font-weight: 780;
+        letter-spacing: -.035em;
+        line-height: 1.12;
+        margin: 0;
+    }
+    .grand-hero p {
+        color: #d6eaf2;
+        font-size: 1rem;
+        line-height: 1.6;
+        max-width: 850px;
+        margin: .75rem 0 0 0;
+    }
+    @media (max-width: 700px) {
+        .grand-hero { padding: 1.35rem; border-radius: 14px; }
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("🔬 Grand ASD-Agent")
-st.caption(
-    "Autonomous Multimodal Scientific Discovery Agent · "
-    "Literature, evidence, candidate hypotheses and sandboxed execution"
+st.markdown(
+    """
+    <div class="grand-hero">
+        <div class="grand-hero-kicker">Autonomous research workspace</div>
+        <h1>Grand ASD-Agent</h1>
+        <p>
+            Multimodal scientific discovery through literature review,
+            evidence retrieval, candidate hypothesis generation and
+            controlled experimental execution.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
+
 
 with st.sidebar:
     st.header("Research workspace")
+    st.markdown("**Navigate**")
+    selected_section = st.radio(
+        "Navigate to",
+        [
+            "Research Overview",
+            "Literature Review",
+            "Candidate Hypotheses",
+            "Experiment Execution",
+            "PDF Ingestion",
+            "Raw Results",
+        ],
+        key="sidebar_navigation",
+        label_visibility="collapsed",
+    )
     st.markdown("**Literature sources**")
-    st.write("• arXiv")
-    st.write("• PubMed")
+    st.write("â€¢ arXiv")
+    st.write("â€¢ PubMed")
     st.markdown("**Core components**")
-    st.write("• Literature Reviewer")
-    st.write("• Hypothesis Generator")
-    st.write("• Scientific Experiment Builder")
-    st.write("• Docker Code Executor")
+    st.write("â€¢ Literature Reviewer")
+    st.write("â€¢ Hypothesis Generator")
+    st.write("â€¢ Scientific Experiment Builder")
+    st.write("â€¢ Docker Code Executor")
     st.divider()
     st.caption(
         "Candidate hypotheses are not experimentally validated "
         "unless independent experimental evidence confirms them."
     )
+    st.divider()
+    st.markdown("**Saved research sessions**")
+    saved_sessions = SESSION_MEMORY.list_sessions()
+    if saved_sessions:
+        session_lookup = {item["session_id"]: item for item in saved_sessions}
+        selected_session_id = st.selectbox(
+            "Choose a previous session",
+            options=list(session_lookup),
+            format_func=lambda sid: (
+                session_lookup[sid].get("research_question", sid)[:65]
+                + " ? " + session_lookup[sid].get("status", "unknown")
+            ),
+            key="restore_session_choice",
+        )
+        if st.button("Restore selected session", width="stretch"):
+            restored = SESSION_MEMORY.get_session(selected_session_id)
+            if restored is None:
+                st.error("The selected session could not be found.")
+            else:
+                st.session_state["last_question"] = restored["research_question"]
+                st.session_state["last_results"] = restored.get("research_snapshot")
+                st.session_state["last_console"] = (
+                    "Restored saved research session: " + selected_session_id
+                )
+                st.session_state["last_run_ok"] = (
+                    restored.get("status") == "completed"
+                )
+                st.session_state["last_error"] = None
+                st.session_state["last_results_error"] = None
+                st.session_state["restored_session_id"] = selected_session_id
+                st.rerun()
+    else:
+        st.caption("No saved research sessions yet.")
 
 
 def as_list(value):
@@ -114,6 +234,10 @@ def parse_dataset_csv(uploaded_file):
                 parsed[column] = float(raw_value)
             except (TypeError, ValueError):
                 parsed[column] = None
+
+        if "data_split" in headers:
+            parsed["data_split"] = row.get("data_split")
+
         rows.append(parsed)
 
     if not rows:
@@ -142,7 +266,9 @@ with st.container(border=True):
             type=["csv"],
             help=(
                 "Required columns: observed, baseline_prediction, "
-                "candidate_prediction. Use matched rows from the same observations."
+                "candidate_prediction. Use matched rows from the same observations. "
+                "Optional data_split column: label each row train or holdout "
+                "to enable separate holdout evaluation."
             ),
         )
         submitted = st.form_submit_button(
@@ -174,8 +300,15 @@ if submitted:
         output_buffer = io.StringIO()
         agent_ok = False
         run_error = None
+        session_id = None
 
         try:
+            try:
+                new_session = SESSION_MEMORY.create_session(cleaned_question)
+                session_id = new_session["session_id"]
+            except (OSError, TypeError, ValueError) as memory_error:
+                st.warning(f"Session memory unavailable: {memory_error}")
+
             with st.spinner(
                 "Searching scientific literature, analyzing evidence, "
                 "generating hypotheses and running the experiment baseline..."
@@ -238,9 +371,45 @@ if submitted:
                     result_data = json.load(file)
                 st.session_state["last_results"] = result_data
                 st.session_state["last_results_error"] = None
+                if session_id is not None:
+                    try:
+                        snapshot = {
+                            key: value for key, value in result_data.items()
+                            if key != "pdf_ingestion"
+                        }
+                        SESSION_MEMORY.update_session(session_id, {
+                            "status": "completed" if agent_ok else "incomplete",
+                            "workflow_stage": "completed" if agent_ok else "finished_with_warnings",
+                            "scientific_validation": result_data.get(
+                                "scientific_validation", "not_independently_verified"
+                            ),
+                            "candidate_hypotheses": (
+                                (result_data.get("hypothesis_generation") or {}).get(
+                                    "hypotheses", []
+                                )
+                            ),
+                            "experiment_results": {
+                                "code_execution": result_data.get("code_execution"),
+                                "holdout_evaluation": result_data.get("holdout_evaluation"),
+                                "statistical_critic": result_data.get("statistical_critic"),
+                            },
+                            "research_snapshot": snapshot,
+                            "progress": {"result_exported": True},
+                        })
+                    except (OSError, TypeError, ValueError, KeyError) as memory_error:
+                        st.warning(f"Research ran, but session saving failed: {memory_error}")
             except (OSError, json.JSONDecodeError) as exc:
                 st.session_state["last_results_error"] = str(exc)
         else:
+            if session_id is not None:
+                try:
+                    SESSION_MEMORY.update_session(session_id, {
+                        "status": "incomplete",
+                        "workflow_stage": "no_fresh_result_export",
+                        "progress": {"result_exported": False},
+                    })
+                except (OSError, TypeError, ValueError, KeyError) as memory_error:
+                    st.warning(f"Session status could not be saved: {memory_error}")
             st.session_state["last_results"] = None
             st.session_state["last_results_error"] = (
                 "The agent did not create a fresh JSON result file for this run. "
@@ -272,27 +441,29 @@ else:
         st.subheader("Research overview")
         st.write(f"**Question:** {results.get('research_question', st.session_state['last_question'])}")
 
-        metric1, metric2, metric3, metric4 = st.columns(4)
+        verification = results.get("publication_verification") or {}
+        metric1, metric2, metric3, metric4, metric5, metric6 = st.columns(6)
         metric1.metric("Papers analyzed", len(papers))
-        metric2.metric("Candidate hypotheses", len(hypotheses))
-        metric3.metric("Execution status", str(execution.get("status", "Unknown")).title())
-        metric4.metric(
+        metric2.metric(
+            "Peer-review evidence passed",
+            verification.get("verified_count", 0),
+        )
+        metric3.metric(
+            "Not verified",
+            verification.get("rejected_count", 0),
+        )
+        metric4.metric("Candidate hypotheses", len(hypotheses))
+        metric5.metric(
+            "Execution status",
+            str(execution.get("status", "Unknown")).replace("_", " ").title(),
+        )
+        metric6.metric(
             "Evidence retrieval",
             str((results.get("evidence_retrieval") or {}).get("status", "Unknown")).replace("_", " ").title(),
         )
 
-        overview_tab, papers_tab, hypotheses_tab, experiment_tab, pdf_tab, raw_tab = st.tabs(
-            [
-                "Research plan & summary",
-                "Literature review",
-                "Candidate hypotheses",
-                "Experiment execution",
-                "PDF ingestion",
-                "Raw results",
-            ]
-        )
 
-        with overview_tab:
+        if selected_section == "Research Overview":
             st.subheader("Research plan")
             if plan:
                 st.markdown("**Objective**")
@@ -325,14 +496,148 @@ else:
                     else:
                         st.markdown(f"- {theme}")
 
+            st.subheader("Peer-review verification")
+            verification_status = verification.get("status", "not_available")
+            if not verification.get("provider_configured", False):
+                st.warning(
+                    "No trusted publication verification provider is configured. "
+                    "Retrieved papers remain unverified, so hypothesis generation "
+                    "and experiment execution are stopped by design."
+                )
+            elif verification_status == "verified_records_available":
+                st.success(
+                    f"{verification.get('verified_count', 0)} paper(s) met "
+                    "the configured Crossref peer-review evidence policy."
+                )
+            elif verification_status == "insufficient_verified_evidence":
+                st.warning(
+                    "No retrieved papers met the configured Crossref peer-review "
+                    "evidence policy. Hypothesis generation and execution were skipped."
+                )
+            else:
+                st.info("Publication verification details are not available.")
+
+            st.caption(
+                "Crossref review records are publisher/member-deposited metadata. "
+                "A missing record means unverified under this strict policy; it "
+                "does not mean the paper is fake or necessarily unreviewed."
+            )
+
+            rejected = as_list(verification.get("rejected_papers"))
+
+            def verification_reason_category(reason):
+                if reason in {
+                    "crossref_prepublication_review_evidence_incomplete",
+                    "peer_review_not_confirmed",
+                    "crossref_requires_doi",
+                }:
+                    return "Insufficient review evidence"
+
+                if reason in {
+                    "crossref_article_metadata_mismatch",
+                    "publication_identifier_mismatch",
+                    "publication_title_mismatch",
+                }:
+                    return "Metadata mismatch"
+
+                if (
+                    reason.startswith("verification_provider_error:")
+                    or reason in {
+                        "verification_provider_not_configured",
+                        "crossref_invalid_review_records",
+                        "crossref_editor_record_missing_doi",
+                        "invalid_provider_response",
+                    }
+                ):
+                    return "Provider or lookup issue"
+
+                return "Other verification failure"
+
+            if rejected:
+                grouped_failures = {}
+
+                for item in rejected:
+                    if not isinstance(item, dict):
+                        continue
+
+                    reason = str(item.get("reason", "verification_failed"))
+                    category = verification_reason_category(reason)
+                    grouped_failures.setdefault(category, []).append(
+                        (item, reason)
+                    )
+
+                with st.expander("Publication verification details"):
+                    for category, entries in grouped_failures.items():
+                        st.markdown(f"**{category} ({len(entries)})**")
+                        for item, reason in entries:
+                            title = item.get("title", "Untitled")
+                            st.markdown(f"- **{title}**")
+                            st.caption(f"Technical reason: {reason}")
+
             retrieval = results.get("evidence_retrieval") or {}
             with st.expander("Evidence retrieval details"):
                 st.json(retrieval)
 
-        with papers_tab:
+        elif selected_section == "Literature Review":
             st.subheader("Analyzed scientific papers")
+            rejected = as_list(verification.get("rejected_papers"))
+
             if not papers:
-                st.info("No analyzed papers are present in this result.")
+                st.info(
+                    "No verified papers are available for scientific evidence "
+                    "in this research run."
+                )
+
+            if rejected:
+                st.subheader("Retrieved but not verified")
+                st.warning(
+                    "These records were retrieved but did not pass the "
+                    "configured publication-verification checks. They are "
+                    "excluded from scientific evidence and hypothesis grounding. "
+                    "Rejection does not establish that a paper is fake or "
+                    "necessarily unreviewed."
+                )
+
+                with st.expander(
+                    f"View {len(rejected)} unverified literature records",
+                    expanded=True,
+                ):
+                    for index, record in enumerate(rejected, start=1):
+                        if not isinstance(record, dict):
+                            st.write(record)
+                            continue
+
+                        title = record.get("title", "Untitled")
+                        st.markdown(f"**{index}. {title}**")
+
+                        st.write(
+                            "Source: "
+                            + str(record.get("source", "Not provided"))
+                        )
+
+                        if record.get("doi"):
+                            st.write("DOI: " + str(record["doi"]))
+
+                        if record.get("pmid"):
+                            st.write("PMID: " + str(record["pmid"]))
+
+                        reason = str(
+                            record.get("reason", "Reason not provided")
+                        )
+                        st.caption(
+                            "Verification reason: "
+                            + reason.replace("_", " ")
+                        )
+                        st.divider()
+
+            elif not papers:
+                st.caption(
+                    "No retrieved records were available to display."
+                )
+
+            if papers:
+                st.subheader("Verified and analyzed literature")
+
             for index, paper in enumerate(papers, start=1):
                 if not isinstance(paper, dict):
                     st.write(paper)
@@ -343,6 +648,22 @@ else:
                     left, right = st.columns(2)
                     left.write(f"**Source:** {paper.get('source', 'Unknown')}")
                     left.write(f"**Published:** {paper.get('published', 'Unknown')}")
+                    left.write(
+                        "**Peer-review status:** "
+                        + str(paper.get("peer_review_status", "Not verified"))
+                    )
+                    left.write(
+                        "**Publication venue:** "
+                        + str(paper.get("verified_publication_venue", "Not verified"))
+                    )
+                    left.write(
+                        "**Verification provider:** "
+                        + str(paper.get("verification_source", "Not verified"))
+                    )
+                    left.write(
+                        "**Verified DOI / PMID:** "
+                        + str(paper.get("verified_identifier", "Not verified"))
+                    )
                     right.metric(
                         "Relevance score",
                         f"{paper.get('relevance_score', 0)}%",
@@ -355,6 +676,9 @@ else:
                     url = paper.get("url")
                     if isinstance(url, str) and url.startswith(("https://", "http://")):
                         st.markdown(f"[Open paper]({url})")
+                    verification_url = paper.get("verification_evidence_url")
+                    if isinstance(verification_url, str) and verification_url.startswith(("https://", "http://")):
+                        st.markdown(f"[Open publication verification evidence]({verification_url})")
 
                     st.markdown("**Key findings**")
                     findings = as_list(paper.get("key_findings"))
@@ -368,14 +692,21 @@ else:
                         with st.expander("Abstract"):
                             st.write(paper["abstract"])
 
-        with hypotheses_tab:
+        elif selected_section == "Candidate Hypotheses":
             st.subheader("Generated candidate hypotheses")
             st.warning(
                 "These are candidate hypotheses generated from retrieved evidence, "
                 "not confirmed scientific discoveries."
             )
             if not hypotheses:
-                st.info("No hypotheses were included in this result.")
+                generation_status = hypotheses_data.get("status")
+                if generation_status == "skipped_insufficient_verified_evidence":
+                    st.warning(
+                        "Hypothesis generation was deliberately stopped: "
+                        "no papers met the configured Crossref peer-review evidence policy."
+                    )
+                else:
+                    st.info("No hypotheses were included in this result.")
             for index, item in enumerate(hypotheses, start=1):
                 if not isinstance(item, dict):
                     st.write(item)
@@ -392,7 +723,27 @@ else:
                         + str(item.get("validation_status", "Not specified"))
                     )
 
-        with experiment_tab:
+        elif selected_section == "Experiment Execution":
+            st.subheader("Workflow trace")
+            workflow_trace = build_workflow_trace(results)
+            st.caption(
+                "Stages and statuses are derived from the recorded research results. "
+                "Skipped stages were not executed; blocked stages did not pass a prerequisite."
+            )
+            for trace_stage in workflow_trace:
+                stage_name = trace_stage["stage"]
+                stage_status = trace_stage["status"].replace("_", " ").title()
+                with st.expander(f"{stage_name} ? {stage_status}"):
+                    st.write(trace_stage["detail"])
+
+            execution_metrics = results.get("execution_metrics") or {}
+            duration = execution_metrics.get("workflow_duration_seconds")
+            if duration is not None:
+                st.metric("Measured workflow duration", f"{duration:.3f} s")
+            st.caption(
+                "Token usage: "                + str(execution_metrics.get("token_usage_status", "not_recorded"))                + " | API cost: "                + str(execution_metrics.get("api_cost_status", "not_recorded"))
+            )
+            st.divider()
             st.subheader("Experiment specification")
             specification = results.get("experiment_specification") or {}
             st.write(
@@ -432,6 +783,24 @@ else:
                 "The critic compares paired absolute prediction errors. "
                 "Statistical significance is not proof of a scientific hypothesis."
             )
+
+            evaluation_scope = critic.get("evaluation_scope")
+            if evaluation_scope:
+                st.write(
+                    "**Evaluation scope:** "
+                    + str(evaluation_scope).replace("_", " ").title()
+                )
+
+            scientific_validation = critic.get("scientific_validation")
+            if scientific_validation:
+                st.write(
+                    "**Scientific validation:** "
+                    + str(scientific_validation).replace("_", " ").title()
+                )
+
+            critic_notice = critic.get("notice")
+            if critic_notice:
+                st.warning(critic_notice)
 
             if critic.get("sample_size", 0):
                 c1, c2, c3 = st.columns(3)
@@ -520,7 +889,7 @@ else:
                 wilcoxon.get("zero_differences", 0)
             )
 
-            st.markdown("**Normality diagnostic — Shapiro–Wilk**")
+            st.markdown("**Normality diagnostic â€” Shapiroâ€“Wilk**")
 
             normality = critic.get("normality_diagnostic") or {}
             normality_status = normality.get("status", "not_available")
@@ -532,13 +901,13 @@ else:
 
             if normality.get("statistic") is not None:
                 st.write(
-                    f"**Shapiro–Wilk statistic:** "
+                    f"**Shapiroâ€“Wilk statistic:** "
                     f"{normality['statistic']:.6g}"
                 )
 
             if normality.get("p_value") is not None:
                 st.write(
-                    f"**Shapiro–Wilk p-value:** "
+                    f"**Shapiroâ€“Wilk p-value:** "
                     f"{normality['p_value']:.6g}"
                 )
 
@@ -567,7 +936,106 @@ else:
 
             with st.expander("Full statistical critic report"):
                 st.json(critic)
-        with pdf_tab:
+            st.divider()
+            st.subheader("Holdout Evaluation")
+
+            holdout = results.get("holdout_evaluation") or {}
+            holdout_status = holdout.get("status", "not_available")
+
+            st.write(
+                "**Evaluation status:** "
+                + str(holdout_status).replace("_", " ").title()
+            )
+
+            holdout_col1, holdout_col2 = st.columns(2)
+            holdout_col1.metric(
+                "Valid training rows",
+                holdout.get("train_sample_size", 0)
+            )
+            holdout_col2.metric(
+                "Valid holdout rows",
+                holdout.get("holdout_sample_size", 0)
+            )
+
+            if holdout_status == "not_provided":
+                st.info(
+                    "Holdout evaluation was not performed. "
+                    "Add an optional data_split column with train/holdout labels."
+                )
+            elif holdout_status == "insufficient_holdout_data":
+                st.warning(
+                    "There are not enough valid holdout observations "
+                    "to calculate holdout metrics."
+                )
+            elif holdout_status == "completed_small_sample":
+                st.warning(
+                    "Metrics were calculated, but the holdout sample is small. "
+                    "Interpret the results cautiously."
+                )
+
+            holdout_metrics = holdout.get("holdout_metrics") or {}
+
+            if holdout_metrics:
+                holdout_mae = holdout_metrics.get("mae") or {}
+                holdout_rmse = holdout_metrics.get("rmse") or {}
+
+                metric_col1, metric_col2 = st.columns(2)
+
+                with metric_col1:
+                    st.markdown("**Holdout MAE**")
+                    st.metric(
+                        "Baseline",
+                        f"{holdout_mae['baseline']:.4f}"
+                        if holdout_mae.get("baseline") is not None
+                        else "N/A"
+                    )
+                    st.metric(
+                        "Candidate",
+                        f"{holdout_mae['candidate']:.4f}"
+                        if holdout_mae.get("candidate") is not None
+                        else "N/A"
+                    )
+
+                with metric_col2:
+                    st.markdown("**Holdout RMSE**")
+                    st.metric(
+                        "Baseline",
+                        f"{holdout_rmse['baseline']:.4f}"
+                        if holdout_rmse.get("baseline") is not None
+                        else "N/A"
+                    )
+                    st.metric(
+                        "Candidate",
+                        f"{holdout_rmse['candidate']:.4f}"
+                        if holdout_rmse.get("candidate") is not None
+                        else "N/A"
+                    )
+
+                improvement = holdout_metrics.get(
+                    "candidate_mae_improvement_percent"
+                )
+                st.metric(
+                    "Candidate MAE improvement",
+                    f"{improvement:.2f}%"
+                    if improvement is not None
+                    else "N/A"
+                )
+
+            if holdout.get("reason"):
+                st.info(holdout["reason"])
+
+            if holdout.get("split_provenance"):
+                st.caption(holdout["split_provenance"])
+
+            if holdout.get("limitations"):
+                with st.expander("Holdout evaluation limitations"):
+                    for limitation in holdout["limitations"]:
+                        st.write("- " + limitation)
+
+            with st.expander("Full holdout evaluation report"):
+                st.json(holdout)
+
+        elif selected_section == "PDF Ingestion":
             st.subheader("Multimodal PDF ingestion")
 
             pdf_data = results.get("pdf_ingestion") or {}
@@ -652,7 +1120,30 @@ else:
                                 width="stretch",
                             )
 
-        with raw_tab:
+                        image_analysis = figure.get("image_analysis") or {}
+                        analysis_status = image_analysis.get("status")
+
+                        if analysis_status == "completed":
+                            st.markdown("**AI-generated figure interpretation**")
+                            st.write(image_analysis.get("interpretation"))
+                            st.caption(
+                                "Generated by Gemini. "
+                                "Not independently scientifically verified."
+                            )
+
+                        elif analysis_status == "failed":
+                            st.warning(
+                                "Figure interpretation failed: "
+                                + str(image_analysis.get("error", "Unknown error"))
+                            )
+
+                        elif analysis_status == "not_configured":
+                            st.caption(
+                                "AI figure interpretation was not run: "
+                                "Gemini is not configured."
+                            )
+
+        elif selected_section == "Raw Results":
             st.subheader("Exported JSON")
             st.json(results)
 
@@ -665,6 +1156,14 @@ else:
             file_name="research_results.json",
             mime="application/json",
             type="primary",
+        )
+
+        latex_bytes = LatexReportGenerator().generate(results).encode("utf-8")
+        st.download_button(
+            "Download research report (LaTeX)",
+            data=latex_bytes,
+            file_name="research_report.tex",
+            mime="application/x-tex",
         )
 
         st.success("Loaded results exported by the existing research agent.")
@@ -682,6 +1181,6 @@ else:
 
 st.divider()
 st.caption(
-    "Grand ASD-Agent · Local dashboard · Uses your existing Python workflow "
+    "Grand ASD-Agent Â· Local dashboard Â· Uses your existing Python workflow "
     "and persistent vector database."
 )

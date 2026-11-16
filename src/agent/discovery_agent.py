@@ -1,5 +1,6 @@
 
 import requests
+import time
 from pathlib import Path
 
 from input_validator import validate_research_question
@@ -19,8 +20,11 @@ from src.agent.vector_store import ScientificVectorStore
 from src.agent.experiment_feedback_loop import ExperimentFeedbackLoop
 from src.agent.experiment_builder import ScientificExperimentBuilder
 from src.agent.statistical_critic import StatisticalCritic
+from src.agent.holdout_evaluator import HoldoutEvaluator
 from src.agent.docker_sandbox import DockerSandbox
 from src.agent.multimodal_ingestion import MultimodalPDFIngestor
+from src.agent.publication_verifier import PublicationVerifier
+from src.agent.crossref_peer_review_provider import CrossrefPeerReviewProvider
 
 
 class ScientificDiscoveryAgent:
@@ -30,6 +34,7 @@ class ScientificDiscoveryAgent:
         self, vector_store=None, sandbox=None, code_reviser=None,
         experiment_builder=None, pdf_ingestor=None,
         gemini_client=None, statistical_critic=None,
+        publication_verifier=None, holdout_evaluator=None,
     ):
         self.name = "Autonomous Scientific Discovery Agent"
         self.planner = ResearchPlanner()
@@ -63,18 +68,73 @@ class ScientificDiscoveryAgent:
             if statistical_critic is not None
             else StatisticalCritic()
         )
+        self.holdout_evaluator = (
+            holdout_evaluator
+            if holdout_evaluator is not None
+            else HoldoutEvaluator()
+        )
 
         # Allow injection of a persistent store for testing or reuse.
         self.vector_store = vector_store
-        self.pdf_ingestor = pdf_ingestor or MultimodalPDFIngestor()
+        self.pdf_ingestor = pdf_ingestor or MultimodalPDFIngestor(gemini_client=gemini_client)
+        self.publication_verifier = (
+            publication_verifier
+            if publication_verifier is not None
+            else PublicationVerifier(
+                provider=CrossrefPeerReviewProvider(),
+                provider_name=CrossrefPeerReviewProvider.PROVIDER_NAME,
+            )
+        )
+        if not callable(getattr(self.publication_verifier, 'verify', None)):
+            raise ValueError(
+                'publication_verifier must implement verify(paper).'
+            )
+
+    @staticmethod
+    def _build_execution_metrics(started_at):
+        """Return measured duration and explicit unavailable cost metadata."""
+        return {
+            "workflow_duration_seconds": round(time.perf_counter() - started_at, 6),
+            "duration_unit": "seconds",
+            "token_usage_status": "not_exposed_by_provider",
+            "api_cost_status": "not_available",
+        }
 
     def run(self, research_question, pdf_paths=None, dataset=None):
         """Run the scientific discovery workflow."""
+        workflow_started_at = time.perf_counter()
         valid, message = validate_research_question(research_question)
 
         if not valid:
             print(f"Invalid research question: {message}")
             return False
+
+        holdout_evaluation = self.holdout_evaluator.evaluate(
+            dataset if dataset is not None else []
+        )
+
+        # Analyze paired data independently of literature retrieval and execution.
+        # This analysis does not establish scientific validity.
+        if dataset is None:
+            statistical_critic_result = {
+                "critic": "StatisticalCritic",
+                "method": "paired_t_test_on_absolute_prediction_error",
+                "status": "not_provided",
+                "sample_size": 0,
+                "p_value": None,
+                "confidence_interval": None,
+                "reason": "No paired evaluation dataset was supplied.",
+            }
+        else:
+            statistical_critic_result = self.statistical_critic.evaluate(dataset)
+
+        statistical_critic_result["evaluation_scope"] = "independent_paired_dataset"
+        statistical_critic_result["scientific_validation"] = "not_established"
+        statistical_critic_result["notice"] = (
+            "This is an independent analysis of the uploaded paired dataset. "
+            "It does not validate literature evidence, a generated hypothesis, "
+            "or execution of an agent-generated experiment."
+        )
 
         # Extract optional PDF material while preserving source page references.
         pdf_documents = []
@@ -132,6 +192,258 @@ class ScientificDiscoveryAgent:
 
             if not papers:
                 print("No papers were found for this query.")
+
+                publication_verification = {
+                    "status": "no_papers_retrieved",
+                    "provider_configured": (
+                        getattr(self.publication_verifier, "provider", None)
+                        is not None
+                    ),
+                    "retrieved_count": 0,
+                    "verified_count": 0,
+                    "rejected_count": 0,
+                    "rejected_papers": [],
+                    "policy": (
+                        "Only publications with matching Crossref metadata and "
+                        "linked pre-publication referee/editor evidence may be "
+                        "used as literature evidence."
+                    ),
+                }
+
+                insufficient_result = {
+                    "research_question": research_question,
+                    "publication_verification": publication_verification,
+                    "pdf_ingestion": {
+                        "status": (
+                            "not_requested" if not pdf_documents
+                            else (
+                                "failed" if all(
+                                    item.get("status") == "failed"
+                                    for item in pdf_documents
+                                )
+                                else (
+                                    "partial" if any(
+                                        item.get("status") == "failed"
+                                        for item in pdf_documents
+                                    ) else "completed"
+                                )
+                            )
+                        ),
+                        "documents": pdf_documents,
+                        "used_as_hypothesis_evidence": False,
+                    },
+                    "research_plan": plan,
+                    "literature_review": {
+                        "role": "Literature Reviewer",
+                        "research_question": research_question,
+                        "paper_count": 0,
+                        "evidence": [],
+                    },
+                    "analyzed_papers": [],
+                    "research_summary": {
+                        "research_question": research_question,
+                        "paper_count": 0,
+                        "summary": "No papers were retrieved from the configured literature sources.",
+                        "common_themes": [],
+                    },
+                    "hypothesis_generation": {
+                        "role": "Hypothesis Generator",
+                        "research_question": research_question,
+                        "hypotheses": [],
+                        "status": "skipped_insufficient_verified_evidence",
+                        "gemini_assistance": {
+                            "enabled": self.hypothesis_generator.gemini_client is not None,
+                            "used_count": 0,
+                            "fallback_count": 0,
+                            "status": "not_used",
+                        },
+                        "notice": (
+                            "Hypothesis generation was skipped because no "
+                            "literature papers were retrieved."
+                        ),
+                    },
+                    "experiment_specification": {
+                        "status": "skipped_insufficient_verified_evidence",
+                        "code": "",
+                    },
+                    "code_execution": {
+                        "status": "skipped_insufficient_verified_evidence",
+                        "output": "",
+                        "error": "Experiment execution was skipped because no papers were retrieved.",
+                    },
+                    "holdout_evaluation": holdout_evaluation,
+                    "statistical_critic": statistical_critic_result,
+                    "retrieved_evidence": [],
+                    "evidence_retrieval": {
+                        "method": "none",
+                        "status": "skipped_insufficient_verified_evidence",
+                        "fallback_used": False,
+                        "fallback_reason": "no_papers_retrieved",
+                        "papers_retrieved": 0,
+                    },
+                }
+
+                insufficient_result["execution_metrics"] = self._build_execution_metrics(workflow_started_at)
+                try:
+                    output_path = self.result_exporter.export_json(
+                        insufficient_result
+                    )
+                    print(
+                        "Insufficient-evidence report exported to: "
+                        f"{output_path}"
+                    )
+                except (OSError, TypeError, ValueError) as error:
+                    print(f"Research result export failed: {error}")
+
+                print("\nResearch workflow completed.")
+                return True
+
+            # Check every source record before it can enter ChromaDB,
+            # literature analysis, or hypothesis generation. Upstream flags
+            # are ignored; only configured provider evidence can authorize it.
+            verified_papers = []
+            rejected_papers = []
+            for paper in papers:
+                verification = self.publication_verifier.verify(paper)
+                if (
+                    isinstance(verification, dict)
+                    and verification.get("verified") is True
+                    and PublicationVerifier.is_verified_record(
+                        verification.get("paper")
+                    )
+                ):
+                    verified_papers.append(verification["paper"])
+                else:
+                    rejected_papers.append({
+                        "title": paper.get("title", "Untitled")
+                        if isinstance(paper, dict) else "Invalid paper record",
+                        "source": paper.get("source", "Unknown")
+                        if isinstance(paper, dict) else "Unknown",
+                        "doi": paper.get("doi", "")
+                        if isinstance(paper, dict) else "",
+                        "pmid": paper.get("pmid", "")
+                        if isinstance(paper, dict) else "",
+                        "reason": verification.get("reason", "verification_failed")
+                        if isinstance(verification, dict)
+                        else "invalid_verification_result",
+                    })
+
+            publication_verification = {
+                "status": (
+                    "verified_records_available"
+                    if verified_papers
+                    else "insufficient_verified_evidence"
+                ),
+                "provider_configured": (
+                    getattr(self.publication_verifier, "provider", None)
+                    is not None
+                ),
+                "retrieved_count": len(papers),
+                "verified_count": len(verified_papers),
+                "rejected_count": len(rejected_papers),
+                "rejected_papers": rejected_papers,
+                "policy": (
+                    "Only publications with matching Crossref metadata and "
+                    "linked pre-publication referee/editor evidence may be "
+                    "used as literature evidence."
+                ),
+            }
+
+            if not verified_papers:
+                print(
+                    "No papers met the configured Crossref peer-review evidence "
+                    "policy. Hypothesis generation and experiment execution are skipped."
+                )
+                empty_review = {
+                    "role": "Literature Reviewer",
+                    "research_question": research_question,
+                    "paper_count": 0,
+                    "evidence": [],
+                }
+                insufficient_result = {
+                    "research_question": research_question,
+                    "publication_verification": publication_verification,
+                    "pdf_ingestion": {
+                        "status": (
+                            "not_requested" if not pdf_documents
+                            else (
+                                "failed" if all(
+                                    item.get("status") == "failed"
+                                    for item in pdf_documents
+                                )
+                                else (
+                                    "partial" if any(
+                                        item.get("status") == "failed"
+                                        for item in pdf_documents
+                                    ) else "completed"
+                                )
+                            )
+                        ),
+                        "documents": pdf_documents,
+                        "used_as_hypothesis_evidence": False,
+                    },
+                    "research_plan": plan,
+                    "literature_review": empty_review,
+                    "analyzed_papers": [],
+                    "research_summary": {
+                        "research_question": research_question,
+                        "paper_count": 0,
+                        "summary": (
+                            "No publications met the configured Crossref "
+                            "peer-review evidence policy."
+                        ),
+                        "common_themes": [],
+                    },
+                    "hypothesis_generation": {
+                        "role": "Hypothesis Generator",
+                        "research_question": research_question,
+                        "hypotheses": [],
+                        "status": "skipped_insufficient_verified_evidence",
+                        "gemini_assistance": {
+                            "enabled": self.hypothesis_generator.gemini_client is not None,
+                            "used_count": 0,
+                            "fallback_count": 0,
+                            "status": "not_used",
+                        },
+                        "notice": (
+                            "Hypothesis generation was stopped because no "
+                            "papers met the configured Crossref peer-review evidence policy."
+                        ),
+                    },
+                    "experiment_specification": {
+                        "status": "skipped_insufficient_verified_evidence",
+                        "code": "",
+                    },
+                    "code_execution": {
+                        "status": "skipped_insufficient_verified_evidence",
+                        "output": "",
+                        "error": (
+                            "Experiment execution was skipped because no "
+                            "literature evidence met the configured peer-review policy."
+                        ),
+                    },
+                    "holdout_evaluation": holdout_evaluation,
+                    "statistical_critic": statistical_critic_result,
+                    "retrieved_evidence": [],
+                    "evidence_retrieval": {
+                        "method": "none",
+                        "status": "skipped_insufficient_verified_evidence",
+                        "fallback_used": False,
+                        "fallback_reason": None,
+                        "papers_retrieved": 0,
+                    },
+                }
+                insufficient_result["execution_metrics"] = self._build_execution_metrics(workflow_started_at)
+                try:
+                    output_path = self.result_exporter.export_json(
+                        insufficient_result
+                    )
+                    print(
+                        "Insufficient-evidence report exported to: "
+                        f"{output_path}"
+                    )
+                except (OSError, TypeError, ValueError) as error:
+                    print(f"Research result export failed: {error}")
                 print("\nResearch workflow completed.")
                 return True
 
@@ -147,9 +459,11 @@ class ScientificDiscoveryAgent:
 
             try:
                 if self.vector_store is None:
-                    self.vector_store = ScientificVectorStore()
+                    self.vector_store = ScientificVectorStore(
+                    publication_verifier=self.publication_verifier
+                )
 
-                stored_count = self.vector_store.add_papers(papers)
+                stored_count = self.vector_store.add_papers(verified_papers)
 
                 print(
                     "\nPapers added or updated in vector store: "
@@ -160,6 +474,10 @@ class ScientificDiscoveryAgent:
                     research_question,
                     n_results=3,
                 )
+                retrieved_evidence = [
+                    paper for paper in retrieved_evidence
+                    if PublicationVerifier.is_verified_record(paper)
+                ]
 
                 print(
                     "Relevant papers retrieved from vector store: "
@@ -201,7 +519,7 @@ class ScientificDiscoveryAgent:
 
             # Prefer semantically retrieved evidence when available.
             # Record when the workflow falls back to the original papers.
-            review_papers = retrieved_evidence or papers
+            review_papers = retrieved_evidence or verified_papers
 
             review = self.literature_reviewer.review(
                 research_question,
@@ -297,24 +615,6 @@ class ScientificDiscoveryAgent:
                     timeout_seconds=10,
                 )
 
-            # Statistical evaluation is performed only after successful execution.
-            if execution_status.get("status") == "success":
-                statistical_critic_result = self.statistical_critic.evaluate(
-                    dataset if dataset is not None else []
-                )
-            else:
-                statistical_critic_result = {
-                    "critic": "StatisticalCritic",
-                    "status": "skipped_execution_not_successful",
-                    "sample_size": 0,
-                    "p_value": None,
-                    "confidence_interval": None,
-                    "reason": (
-                        "Statistical evaluation requires successful "
-                        "experiment execution."
-                    ),
-                }
-
             print("\n=== Statistical Critic ===")
             print(f"Statistical evaluation status: {statistical_critic_result['status']}")
             print(statistical_critic_result.get("interpretation", "No statistical interpretation available."))
@@ -353,6 +653,7 @@ class ScientificDiscoveryAgent:
 
             export_data = {
                 "research_question": research_question,
+                "publication_verification": publication_verification,
                 "pdf_ingestion": {
                     "status": (
                         "not_requested"
@@ -383,11 +684,13 @@ class ScientificDiscoveryAgent:
                 "hypothesis_generation": hypothesis_result,
                 "experiment_specification": experiment_specification,
                 "code_execution": execution_status,
+                "holdout_evaluation": holdout_evaluation,
                 "statistical_critic": statistical_critic_result,
                 "retrieved_evidence": retrieved_evidence,
                 "evidence_retrieval": evidence_retrieval,
             }
 
+            export_data["execution_metrics"] = self._build_execution_metrics(workflow_started_at)
             try:
                 output_path = self.result_exporter.export_json(export_data)
                 print(
