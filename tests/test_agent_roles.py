@@ -2,6 +2,18 @@
 import unittest
 from unittest.mock import Mock
 
+VERIFIED_METADATA = {
+    "doi": "10.1234/test.paper",
+    "peer_review_status": "verified",
+    "peer_reviewed_verified": True,
+    "verification_source": "Unit-test publication registry",
+    "verified_identifier": "10.1234/test.paper",
+    "verified_publication_title": "AI in discovery",
+    "verified_publication_venue": "Journal of Test Science",
+    "verification_evidence_url": "https://registry.example.org/record/1",
+}
+
+
 from src.agent.agent_roles import (
     CodeExecutor,
     HypothesisGenerator,
@@ -25,6 +37,7 @@ class TestLiteratureReviewer(unittest.TestCase):
             "abstract": "AI may improve screening.",
             "source": "PubMed",
             "url": "https://pubmed.ncbi.nlm.nih.gov/123/",
+            **VERIFIED_METADATA,
         }
 
         self.analyzed_paper = {
@@ -35,6 +48,7 @@ class TestLiteratureReviewer(unittest.TestCase):
             "url": "https://pubmed.ncbi.nlm.nih.gov/123/",
             "relevance_score": 80,
             "key_findings": ["Screening may improve."],
+            **VERIFIED_METADATA,
         }
 
     def test_review_returns_ranked_evidence(self):
@@ -149,26 +163,41 @@ class TestLiteratureReviewer(unittest.TestCase):
         self.assertEqual(result["paper_count"], 0)
         self.assertEqual(result["evidence"], [])
 
-    def test_papers_with_usable_content_are_retained(self):
-        papers = [
-            self.valid_paper,
-            {"title": "A useful paper"},
-            {"abstract": "Useful scientific evidence."},
-            {"document": "Full scientific paper text."},
-            {},
-            None,
-        ]
-
+    def test_unverified_papers_never_reach_analyzer(self):
+        unverified = {
+            "id": "unverified-1",
+            "title": "Unverified research",
+            "abstract": "This paper has no verified publication record.",
+        }
         self.analyzer.analyze.return_value = []
 
-        self.reviewer.review(
+        result = self.reviewer.review(
             "AI in discovery",
-            papers=papers,
+            papers=[unverified, self.valid_paper],
         )
 
         self.analyzer.analyze.assert_called_once_with(
             "AI in discovery",
-            papers[:4],
+            [self.valid_paper],
+        )
+        self.assertEqual(result["paper_count"], 0)
+
+    def test_papers_with_usable_verified_content_are_retained(self):
+        title_metadata = {
+            **VERIFIED_METADATA,
+            "verified_publication_title": "A useful paper",
+        }
+        papers = [
+            self.valid_paper,
+            {"title": "A useful paper", **title_metadata},
+            {},
+            None,
+        ]
+        self.analyzer.analyze.return_value = []
+        self.reviewer.review("AI in discovery", papers=papers)
+        self.analyzer.analyze.assert_called_once_with(
+            "AI in discovery",
+            papers[:2],
         )
 
     def test_non_dictionary_papers_are_ignored(self):
@@ -240,6 +269,7 @@ class TestHypothesisGenerator(unittest.TestCase):
                     "source": "PubMed",
                     "url": "https://pubmed.ncbi.nlm.nih.gov/123/",
                     "key_findings": ["AI may improve screening."],
+                    **VERIFIED_METADATA,
                 }
             ]
         }
@@ -256,6 +286,20 @@ class TestHypothesisGenerator(unittest.TestCase):
             result["hypotheses"][0]["validation_status"],
             "not experimentally validated",
         )
+
+    def test_unverified_evidence_never_generates_hypotheses(self):
+        result = HypothesisGenerator().generate(
+            "AI in discovery",
+            {
+                "evidence": [{
+                    "paper_id": "unverified-1",
+                    "title": "Unverified research",
+                    "key_findings": ["A claim without verified publication evidence."],
+                }]
+            },
+        )
+
+        self.assertEqual(result["hypotheses"], [])
 
     def test_empty_evidence_produces_no_hypotheses(self):
         result = HypothesisGenerator().generate(
@@ -286,6 +330,7 @@ class TestHypothesisGenerator(unittest.TestCase):
                 "source": "PubMed",
                 "url": "https://pubmed.ncbi.nlm.nih.gov/123/",
                 "key_findings": ["AI may improve screening."],
+                **VERIFIED_METADATA,
             }]
         }
 
@@ -318,7 +363,9 @@ class TestHypothesisGenerator(unittest.TestCase):
             "AI in discovery",
             {"evidence": [{
                 "paper_id": "PMID:123",
+                "title": "AI in discovery",
                 "key_findings": ["AI may improve screening."],
+                **VERIFIED_METADATA,
             }]},
         )
 

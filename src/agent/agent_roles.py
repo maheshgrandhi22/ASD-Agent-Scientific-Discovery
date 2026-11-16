@@ -1,4 +1,9 @@
 
+"""Roles used in the scientific discovery workflow."""
+
+from src.agent.publication_verifier import PublicationVerifier
+
+
 class LiteratureReviewer:
     """Retrieve, validate, and analyze scientific literature."""
 
@@ -38,11 +43,14 @@ class LiteratureReviewer:
         if self.analyzer is None:
             raise ValueError("An analyzer is required.")
 
-        # Keep only dictionary records with some usable scientific text.
+        # Defense in depth: only records verified by the discovery pipeline
+        # may reach analysis. This metadata check is not a substitute for the
+        # authoritative provider call performed by PublicationVerifier.verify.
+        # Keep only verified dictionary records with usable scientific text.
         valid_papers = []
 
         for paper in papers:
-            if not isinstance(paper, dict):
+            if not PublicationVerifier.is_verified_record(paper):
                 continue
 
             title = paper.get("title", "")
@@ -80,6 +88,21 @@ class LiteratureReviewer:
                 "relevance_score": paper.get("relevance_score", 0),
                 "abstract": paper.get("abstract", ""),
                 "key_findings": findings,
+                "peer_review_status": paper.get("peer_review_status"),
+                "peer_reviewed_verified": paper.get("peer_reviewed_verified"),
+                "verification_source": paper.get("verification_source"),
+                "verified_identifier": paper.get("verified_identifier"),
+                "verified_publication_title": paper.get(
+                    "verified_publication_title"
+                ),
+                "verified_publication_venue": paper.get(
+                    "verified_publication_venue"
+                ),
+                "verification_evidence_url": paper.get(
+                    "verification_evidence_url"
+                ),
+                "doi": paper.get("doi", ""),
+                "pmid": paper.get("pmid", ""),
             })
 
         return {
@@ -113,7 +136,7 @@ class HypothesisGenerator:
         gemini_fallbacks = 0
 
         for paper in evidence:
-            if not isinstance(paper, dict):
+            if not PublicationVerifier.is_verified_record(paper):
                 continue
 
             findings = paper.get("key_findings", [])
