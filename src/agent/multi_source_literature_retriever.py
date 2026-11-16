@@ -82,4 +82,15 @@ class MultiSourceLiteratureRetriever:
                 "All literature sources failed. " + " | ".join(errors)
             )
 
+        # The strict Crossref verifier requires a DOI. Preserve the source
+        # search order where possible, but do not let DOI-less arXiv records
+        # consume the entire result budget before DOI-bearing PubMed records
+        # can be considered. This is prioritisation, not a peer-review claim.
+        papers.sort(
+            key=lambda paper: bool(
+                isinstance(paper.get("doi"), str)
+                and paper["doi"].strip()
+            ),
+            reverse=True,
+        )
         return papers[:max_results]

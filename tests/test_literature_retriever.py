@@ -1,4 +1,4 @@
-﻿
+
 import unittest
 from unittest.mock import Mock, patch
 import requests
@@ -126,6 +126,31 @@ class TestLiteratureRetriever(unittest.TestCase):
             self.retriever.search("drug discovery", 1)
 
         mock_get.assert_called_once()
+
+    @patch("src.agent.literature_retriever.requests.get")
+    def test_search_extracts_arxiv_doi_and_journal_reference(self, mock_get):
+        xml = b"""
+        <feed xmlns="http://www.w3.org/2005/Atom"
+              xmlns:arxiv="http://arxiv.org/schemas/atom">
+            <entry>
+                <id>http://arxiv.org/abs/1234.5678</id>
+                <title>AI for Science</title>
+                <summary>Research summary.</summary>
+                <published>2026-01-01T00:00:00Z</published>
+                <arxiv:doi>10.1234/ai.science</arxiv:doi>
+                <arxiv:journal_ref>Journal of AI Science</arxiv:journal_ref>
+            </entry>
+        </feed>
+        """
+        response = Mock()
+        response.content = xml
+        response.raise_for_status.return_value = None
+        mock_get.return_value = response
+
+        papers = self.retriever.search("science", 1)
+
+        self.assertEqual(papers[0]["doi"], "10.1234/ai.science")
+        self.assertEqual(papers[0]["journal_ref"], "Journal of AI Science")
 
 
 if __name__ == "__main__":

@@ -94,6 +94,42 @@ class TestMultiSourceLiteratureRetriever(unittest.TestCase):
 
         self.assertEqual(len(papers), 2)
 
+    def test_doi_bearing_pubmed_records_are_not_starved_by_arxiv_limit(self):
+        self.arxiv.search.return_value = [
+            {"id": f"arxiv-{index}", "title": f"arXiv paper {index}"}
+            for index in range(3)
+        ]
+        self.pubmed.search.return_value = [
+            {
+                "id": "PMID:12345",
+                "pmid": "12345",
+                "doi": "10.1234/pubmed.paper",
+                "title": "PubMed journal article",
+                "abstract": "A journal article with a DOI.",
+            }
+        ]
+
+        papers = self.retriever.search("AI discovery", max_results=3)
+
+        self.assertEqual(len(papers), 3)
+        self.assertEqual(papers[0]["source"], "PubMed")
+        self.assertEqual(papers[0]["doi"], "10.1234/pubmed.paper")
+
+    def test_doi_bearing_arxiv_records_are_prioritised(self):
+        self.arxiv.search.return_value = [
+            {"id": "arxiv-no-doi", "title": "No DOI"},
+            {
+                "id": "arxiv-with-doi",
+                "title": "Journal-linked preprint",
+                "doi": "10.1234/arxiv.journal",
+            },
+        ]
+        self.pubmed.search.return_value = []
+
+        papers = self.retriever.search("AI discovery", max_results=1)
+
+        self.assertEqual(papers[0]["doi"], "10.1234/arxiv.journal")
+
 
 if __name__ == "__main__":
     unittest.main()

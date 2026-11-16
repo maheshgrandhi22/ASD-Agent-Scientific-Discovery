@@ -59,6 +59,7 @@ class LiteratureRetriever:
 
         namespace = {
             "atom": "http://www.w3.org/2005/Atom",
+            "arxiv": "http://arxiv.org/schemas/atom",
         }
 
         papers = []
@@ -90,6 +91,12 @@ class LiteratureRetriever:
             published = entry.findtext(
                 "atom:published", default="", namespaces=namespace
             )
+            doi = entry.findtext(
+                "arxiv:doi", default="", namespaces=namespace
+            ).strip()
+            journal_ref = entry.findtext(
+                "arxiv:journal_ref", default="", namespaces=namespace
+            ).strip()
 
             papers.append(
                 {
@@ -98,6 +105,8 @@ class LiteratureRetriever:
                     "summary": summary,
                     "authors": authors,
                     "published": published,
+                    "doi": doi,
+                    "journal_ref": journal_ref,
                 }
             )
 
