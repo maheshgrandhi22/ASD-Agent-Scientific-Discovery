@@ -1,4 +1,4 @@
-﻿import math
+import math
 import warnings
 
 from scipy import stats
@@ -308,6 +308,14 @@ class StatisticalCritic:
                     "for every valid observation."
                 ),
             })
+            return result
+
+        if all(value == improvements[0] for value in improvements):
+            result["interpretation"] = (
+                "All paired improvements are identical and nonzero. "
+                "The conventional paired t-test is not meaningful "
+                "because the observed improvements have zero variance."
+            )
             return result
 
         standard_deviation = stats.tstd(improvements)

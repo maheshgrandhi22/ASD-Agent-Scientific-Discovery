@@ -1,4 +1,4 @@
-﻿import unittest
+import unittest
 
 from src.agent.statistical_critic import StatisticalCritic
 
@@ -177,6 +177,10 @@ class TestStatisticalCritic(unittest.TestCase):
             "constant_data",
         )
 
+        self.assertEqual(result["status"], "insufficient_data")
+        self.assertIsNone(result["p_value"])
+        self.assertIsNone(result["confidence_interval"])
+        self.assertIn("zero variance", result["interpretation"])
     def test_shapiro_diagnostic_skips_more_than_5000_pairs(self):
         dataset = [
             {
@@ -192,6 +196,8 @@ class TestStatisticalCritic(unittest.TestCase):
             "skipped_sample_limit",
         )
 
+        self.assertEqual(result["status"], "insufficient_data")
+        self.assertIsNone(result["p_value"])
     def test_reports_statistical_limitations(self):
         result = self.critic.evaluate([])
         self.assertTrue(result["limitations"])
